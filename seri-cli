@@ -84,7 +84,7 @@ history_show() {
 TMDB_BASE="https://api.themoviedb.org/3"
 # We use a community-shared free TMDB read key (public tier, rate-limited)
 # Users can override with their own in config: TMDB_KEY=...
-TMDB_KEY="${TMDB_KEY:-4f4086a43f618f89e89bca8a4d9cd3ce}"
+TMDB_KEY="${TMDB_KEY:-037e92c800c648af4e68b0661944c690}"
 
 tmdb_search() {
     local query="$1" type="${2:-multi}"   # multi | movie | tv
