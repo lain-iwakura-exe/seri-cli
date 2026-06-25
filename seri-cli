@@ -106,7 +106,7 @@ parse_results() {
           (.id | tostring),
           (.title // .name),
           ((.release_date // .first_air_date // "")[0:4])
-        ] | join("|||")
+        ] | join("	")
     ' 2>/dev/null
 }
 
@@ -323,26 +323,27 @@ search_and_play() {
     results=$(parse_results "$json")
     [[ -z "$results" ]] && { printf "${RED}[!] No results.${RST}\n"; return 1; }
 
-    # Build fzf list
+    # Build fzf list using tab as separator (safe)
     local fzf_input
-    fzf_input=$(echo "$results" | awk -F'|||' '{
-        type=$1; id=$2; title=$3; year=$4
-        icon=(type=="movie") ? "🎬" : "📺"
-        printf "%s %s (%s) [%s]|||%s|||%s|||%s\n", icon, title, year, type, type, id, title
-    }')
+    fzf_input=$(echo "$results" | while IFS=$'\t' read -r type id title year; do
+        [[ -z "$id" ]] && continue
+        icon="📺"
+        [[ "$type" == "movie" ]] && icon="🎬"
+        printf "%s\t%s\t%s\t%s (%s) [%s]\n" "$type" "$id" "$title" "$title" "$year" "$type"
+    done)
 
     local selected
-    selected=$(echo "$fzf_input" | awk -F'|||' '{print $1}' | fzf \
+    selected=$(echo "$fzf_input" | awk -F'\t' '{print $4}' | fzf \
         --prompt="Select ❯ " --height=40 --border=rounded \
         --color="fg:#cdd6f4,bg:#1e1e2e,hl:#cba6f7,prompt:#cba6f7,pointer:#f5c2e7" \
         --header="seri-cli — results for: ${query}")
     [[ -z "$selected" ]] && return 0
 
     local row media_type media_id title
-    row=$(echo "$fzf_input" | grep -F "${selected}|||" | head -1)
-    media_type=$(echo "$row" | awk -F'|||' '{print $2}')
-    media_id=$(echo "$row" | awk -F'|||' '{print $3}')
-    title=$(echo "$row" | awk -F'|||' '{print $4}')
+    row=$(echo "$fzf_input" | awk -F'\t' -v sel="$selected" '$4==sel {print; exit}')
+    media_type=$(echo "$row" | cut -f1)
+    media_id=$(echo "$row"   | cut -f2)
+    title=$(echo "$row"      | cut -f3)
 
     local quality
     quality=$(select_quality)
