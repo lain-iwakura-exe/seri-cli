@@ -32,13 +32,13 @@
 ### One-liner (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yourusername/seri-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lain-iwakura-exe/seri-cli/main/install.sh | bash
 ```
 
 ### Manual
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yourusername/seri-cli/main/seri-cli \
+curl -fsSL https://raw.githubusercontent.com/lain-iwakura-exe/seri-cli/main/seri-cli \
     -o ~/.local/bin/seri-cli
 chmod +x ~/.local/bin/seri-cli
 ```
@@ -173,7 +173,7 @@ View it: `seri-cli -H`
 ```bash
 seri-cli -u
 # or
-curl -fsSL https://raw.githubusercontent.com/yourusername/seri-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lain-iwakura-exe/seri-cli/main/install.sh | bash
 ```
 
 ---
