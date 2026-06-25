@@ -131,7 +131,7 @@ tmdb_to_imdb() {
     curl -sf "$endpoint" 2>/dev/null | jq -r '.imdb_id // empty'
 }
 
-# Get streams from Stremio's local server
+# Get streams directly from Torrentio
 stremio_get_streams() {
     local type="$1" imdb_id="$2" season="$3" ep="$4"
     local stremio_type stremio_id
@@ -144,9 +144,9 @@ stremio_get_streams() {
         stremio_id="${imdb_id}:${season}:${ep}"
     fi
 
-    # Query the Stremio local server for streams
-    local url="${STREMIO_BASE}/stream/${stremio_type}/${stremio_id}.json"
-    curl -sf --max-time 15 "$url" 2>/dev/null
+    # Query Torrentio directly
+    curl -sf --max-time 15 \
+        "https://torrentio.strem.fun/stream/${stremio_type}/${stremio_id}.json" 2>/dev/null
 }
 
 # Parse stream response and pick best URL
@@ -350,8 +350,6 @@ search_and_play() {
     fi
     msg_ok "IMDB ID: ${imdb_id}"
 
-    # Start Stremio if needed
-    stremio_start
 
     local quality
     quality=$(select_quality)
