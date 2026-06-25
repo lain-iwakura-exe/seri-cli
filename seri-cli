@@ -151,62 +151,99 @@ stremio_get_streams() {
 
 # Parse stream response and pick best URL
 pick_stream_url() {
-    local json="$1" quality="$2"
+    local json="$1"
 
-    # Try to get a direct URL stream first
+    # Try direct URL first
     local url
-    url=$(echo "$json" | jq -r '
-        .streams[] |
-        select(.url != null) |
-        select(.url | test("\\.(m3u8|mp4|mkv)")) |
-        .url
-    ' 2>/dev/null | head -1)
-
-    [[ -n "$url" ]] && echo "$url" && return 0
-
-    # Try any URL
     url=$(echo "$json" | jq -r '
         .streams[] | select(.url != null) | .url
     ' 2>/dev/null | head -1)
+    [[ -n "$url" ]] && echo "url:${url}" && return 0
 
-    [[ -n "$url" ]] && echo "$url" && return 0
+    # Pick best infoHash stream — prefer 1080p, then 720p, then any
+    local hash file_idx trackers name
+    local stream_json
+    stream_json=$(echo "$json" | jq -r '
+        .streams[] | select(.infoHash != null) |
+        [.infoHash, (.fileIdx // 0 | tostring), (.title // ""), (.sources // [] | join(","))] | join("|||")
+    ' 2>/dev/null)
 
-    # Try infoHash (torrent-based stream) — MPV can handle magnet via peerflix/webtorrent
-    local hash
-    hash=$(echo "$json" | jq -r '
-        .streams[] | select(.infoHash != null) | .infoHash
-    ' 2>/dev/null | head -1)
+    # Try 1080p first
+    local line
+    line=$(echo "$stream_json" | grep -i "1080" | head -1)
+    # Then 720p
+    [[ -z "$line" ]] && line=$(echo "$stream_json" | grep -i "720" | head -1)
+    # Then any
+    [[ -z "$line" ]] && line=$(echo "$stream_json" | head -1)
 
-    if [[ -n "$hash" ]]; then
-        local file_idx
-        file_idx=$(echo "$json" | jq -r '
-            .streams[] | select(.infoHash != null) | .fileIdx // 0
-        ' 2>/dev/null | head -1)
-        echo "torrent:${hash}:${file_idx:-0}"
-        return 0
-    fi
+    [[ -z "$line" ]] && return 1
 
-    return 1
+    hash=$(echo "$line"     | cut -d'|||' -f1)
+    file_idx=$(echo "$line" | cut -d'|||' -f2)
+    trackers=$(echo "$line" | cut -d'|||' -f4)
+
+    echo "torrent:${hash}:${file_idx}:${trackers}"
 }
 
-# Handle torrent streams via peerflix or webtorrent-mpv-hook
+# Build full magnet link with trackers
+build_magnet() {
+    local hash="$1" trackers="$2"
+    local magnet="magnet:?xt=urn:btih:${hash}"
+    # Add default trackers
+    local default_trackers=(
+        "udp://open.demonii.com:1337/announce"
+        "udp://tracker.openbittorrent.com:80/announce"
+        "udp://tracker.coppersurfer.tk:6969/announce"
+        "udp://glotorrents.pw:6969/announce"
+        "udp://tracker.opentrackr.org:1337/announce"
+        "udp://torrent.gresille.org:80/announce"
+        "udp://p4p.arenabg.com:1337/announce"
+        "udp://tracker.leechers-paradise.org:6969/announce"
+    )
+    for t in "${default_trackers[@]}"; do
+        magnet+="&tr=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${t}'))")"
+    done
+    # Add Torrentio trackers
+    if [[ -n "$trackers" ]]; then
+        while IFS=',' read -ra tr_list; do
+            for t in "${tr_list[@]}"; do
+                [[ -n "$t" ]] && magnet+="&tr=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${t}'))")"
+            done
+        done <<< "$trackers"
+    fi
+    echo "$magnet"
+}
+
+# Handle torrent streams
 play_torrent() {
-    local hash="$1" file_idx="$2" title="$3"
+    local hash="$1" file_idx="$2" trackers="$3" title="$4"
+    local magnet
+    magnet=$(build_magnet "$hash" "$trackers")
 
-    if command -v peerflix &>/dev/null; then
-        msg_info "Streaming via peerflix (torrent)…"
-        peerflix "magnet:?xt=urn:btih:${hash}" --mpv --index "$file_idx" -- \
-            --title="${title}" --force-window=yes --keep-open=yes
-    elif command -v webtorrent &>/dev/null; then
-        msg_info "Streaming via webtorrent (torrent)…"
-        webtorrent "magnet:?xt=urn:btih:${hash}" --mpv
+    msg_info "Building magnet link with trackers…"
+
+    if command -v webtorrent &>/dev/null; then
+        msg_info "Streaming via webtorrent…"
+        webtorrent "$magnet" \
+            --mpv \
+            --select "$file_idx" \
+            -- --title="${title}" --force-window=yes --keep-open=yes
+    elif command -v peerflix &>/dev/null; then
+        msg_info "Streaming via peerflix…"
+        peerflix "$magnet" \
+            --mpv \
+            --index "$file_idx" \
+            -- --title="${title}" --force-window=yes --keep-open=yes
     else
-        msg_warn "Torrent stream found but no torrent client available."
-        msg_warn "Install peerflix: npm install -g peerflix"
-        msg_warn "Or webtorrent:   npm install -g webtorrent-cli"
-        msg_warn "Magnet link: magnet:?xt=urn:btih:${hash}"
+        msg_err "No torrent streamer found!"
+        msg_warn "Install webtorrent: sudo npm install -g webtorrent-cli"
+        msg_warn "Or peerflix:        sudo npm install -g peerflix"
+        echo ""
+        msg_info "Magnet link (copy to any torrent client):"
+        echo "$magnet"
     fi
 }
+
 
 # ── Quality picker ────────────────────────────────────────────
 select_quality() {
@@ -226,11 +263,17 @@ play_stream() {
 
     # Handle torrent streams
     if [[ "$url" == torrent:* ]]; then
-        local hash file_idx
-        hash=$(echo "$url" | cut -d: -f2)
+        local hash file_idx trackers
+        hash=$(echo "$url"     | cut -d: -f2)
         file_idx=$(echo "$url" | cut -d: -f3)
-        play_torrent "$hash" "$file_idx" "$title"
+        trackers=$(echo "$url" | cut -d: -f4-)
+        play_torrent "$hash" "$file_idx" "$trackers" "$title"
         return $?
+    fi
+
+    # Handle direct URL streams
+    if [[ "$url" == url:* ]]; then
+        url="${url#url:}"
     fi
 
     msg_play "Playing: ${title}"
