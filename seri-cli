@@ -360,7 +360,7 @@ self_update() {
     local install_path
     install_path=$(command -v seri-cli 2>/dev/null || echo "/usr/local/bin/seri-cli")
     printf "${BLU}[~]${RST} Updating seri-cli from GitHub…\n"
-    if curl -fsSL "https://raw.githubusercontent.com/yourusername/seri-cli/main/seri-cli" \
+    if curl -fsSL "https://raw.githubusercontent.com/lain-iwakura-exe/seri-cli/main/seri-cli" \
         -o "$install_path" 2>/dev/null; then
         chmod +x "$install_path"
         printf "${GRN}[✓]${RST} Updated to latest version.\n"

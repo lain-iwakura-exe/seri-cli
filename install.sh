@@ -4,7 +4,7 @@
 set -euo pipefail
 
 VERSION="1.0.0"
-REPO="https://raw.githubusercontent.com/yourusername/seri-cli/main"
+REPO="https://raw.githubusercontent.com/lain-iwakura-exe/seri-cli/main"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 SCRIPT_NAME="seri-cli"
 
