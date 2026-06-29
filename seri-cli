@@ -4,7 +4,7 @@
 #  License: GPL-3.0
 # ============================================================
 
-VERSION="4.3.0"
+VERSION="4.4.0"
 QUALITY="${QUALITY:-best}"
 HISTORY_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/seri-cli/history"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/seri-cli/config"
@@ -160,40 +160,79 @@ play_torrent() {
     msg_play "Playing: ${title}"
     msg_info "Hash: ${hash:0:12}... FileIdx: ${file_idx}"
 
-    # Use peerflix to serve torrent on local HTTP then open with MPV
-    if command -v peerflix &>/dev/null; then
-        msg_info "Starting peerflix HTTP server..."
-        # Kill any existing peerflix
-        pkill -f peerflix 2>/dev/null
-        sleep 1
-        # Start peerflix in background serving on port 8888
-        if [[ "$file_idx" == "0" ]]; then
-            peerflix "$magnet" --port 8888 &
-        else
-            peerflix "$magnet" --port 8888 --index "$file_idx" &
-        fi
-        local peerflix_pid=$!
-        # Wait for server to start
-        msg_info "Waiting for stream to buffer..."
-        local tries=0
-        while ! curl -sf --max-time 1 "http://localhost:8888" &>/dev/null; do
-            sleep 1
-            tries=$((tries + 1))
-            [[ $tries -gt 30 ]] && break
-        done
-        # Open MPV with the local stream
-        msg_info "Opening MPV..."
-        mpv             --title="${title}"             --force-window=yes             --keep-open=yes             --osd-level=1             "http://localhost:8888"
-        local exit_code=$?
-        # Kill peerflix after MPV closes
-        kill "$peerflix_pid" 2>/dev/null
-        pkill -f peerflix 2>/dev/null
-        return $exit_code
-    else
-        msg_err "peerflix not found. Install it:"
-        echo "  sudo npm install -g peerflix"
+    if ! command -v peerflix &>/dev/null; then
+        msg_err "peerflix not found. Install: sudo npm install -g peerflix"
         return 1
     fi
+
+    # Kill any existing peerflix
+    pkill -f peerflix 2>/dev/null
+    sleep 1
+
+    # Start peerflix HTTP server in background
+    msg_info "Starting peerflix HTTP server..."
+    if [[ "$file_idx" == "0" ]]; then
+        peerflix "$magnet" --port 8888 &>/tmp/peerflix.log &
+    else
+        peerflix "$magnet" --port 8888 --index "$file_idx" &>/tmp/peerflix.log &
+    fi
+    local peerflix_pid=$!
+
+    # Wait for server AND check for peers
+    msg_info "Waiting for peers and buffering..."
+    local tries=0
+    local server_up=0
+    local has_peers=0
+
+    while [[ $tries -lt 30 ]]; do
+        sleep 2
+        tries=$((tries + 1))
+
+        # Check if server is up
+        if curl -sf --max-time 1 "http://localhost:8888" &>/dev/null; then
+            server_up=1
+        fi
+
+        # Check peers from peerflix log
+        local peer_count
+        peer_count=$(grep -oP "from \K\d+(?=/\d+ peers)" /tmp/peerflix.log 2>/dev/null | tail -1)
+        if [[ -n "$peer_count" ]] && [[ "$peer_count" -gt 0 ]]; then
+            has_peers=1
+        fi
+
+        # Check for 0/0 peers after 10 seconds — dead torrent, skip it
+        if [[ $tries -ge 5 ]]; then
+            local peer_line
+            peer_line=$(grep "peers" /tmp/peerflix.log 2>/dev/null | tail -1)
+            if echo "$peer_line" | grep -q "0/0 peers"; then
+                msg_warn "No peers found for this stream, skipping..."
+                kill "$peerflix_pid" 2>/dev/null
+                pkill -f peerflix 2>/dev/null
+                return 1
+            fi
+        fi
+
+        # If server is up and has peers, launch MPV
+        if [[ $server_up -eq 1 ]] && [[ $has_peers -eq 1 ]]; then
+            break
+        fi
+    done
+
+    if [[ $server_up -eq 0 ]]; then
+        msg_warn "Stream server did not start, skipping..."
+        kill "$peerflix_pid" 2>/dev/null
+        pkill -f peerflix 2>/dev/null
+        return 1
+    fi
+
+    # Launch MPV
+    msg_info "Opening MPV..."
+    mpv         --title="${title}"         --force-window=yes         --keep-open=yes         --osd-level=1         --save-position-on-quit         "http://localhost:8888"
+    local exit_code=$?
+
+    kill "$peerflix_pid" 2>/dev/null
+    pkill -f peerflix 2>/dev/null
+    return $exit_code
 }
 
 play_direct() {
