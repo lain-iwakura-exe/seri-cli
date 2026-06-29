@@ -44,9 +44,9 @@ dep_check() {
         command -v dnf    &>/dev/null && echo "  sudo dnf install ${missing[*]}"
         exit 1
     fi
-    if ! command -v torrentflix &>/dev/null; then
-        msg_err "Missing torrentflix. Install it:"
-        echo "  sudo npm install -g torrentflix"
+    if ! command -v peerflix &>/dev/null; then
+        msg_err "Missing peerflix. Install it:"
+        echo "  sudo npm install -g peerflix"
         exit 1
     fi
 }
@@ -159,10 +159,41 @@ play_torrent() {
 
     msg_play "Playing: ${title}"
     msg_info "Hash: ${hash:0:12}... FileIdx: ${file_idx}"
-    msg_info "Streaming via torrentflix..."
 
-    torrentflix "$magnet" --player mpv
-    return $?
+    # Use peerflix to serve torrent on local HTTP then open with MPV
+    if command -v peerflix &>/dev/null; then
+        msg_info "Starting peerflix HTTP server..."
+        # Kill any existing peerflix
+        pkill -f peerflix 2>/dev/null
+        sleep 1
+        # Start peerflix in background serving on port 8888
+        if [[ "$file_idx" == "0" ]]; then
+            peerflix "$magnet" --port 8888 &
+        else
+            peerflix "$magnet" --port 8888 --index "$file_idx" &
+        fi
+        local peerflix_pid=$!
+        # Wait for server to start
+        msg_info "Waiting for stream to buffer..."
+        local tries=0
+        while ! curl -sf --max-time 1 "http://localhost:8888" &>/dev/null; do
+            sleep 1
+            tries=$((tries + 1))
+            [[ $tries -gt 30 ]] && break
+        done
+        # Open MPV with the local stream
+        msg_info "Opening MPV..."
+        mpv             --title="${title}"             --force-window=yes             --keep-open=yes             --osd-level=1             "http://localhost:8888"
+        local exit_code=$?
+        # Kill peerflix after MPV closes
+        kill "$peerflix_pid" 2>/dev/null
+        pkill -f peerflix 2>/dev/null
+        return $exit_code
+    else
+        msg_err "peerflix not found. Install it:"
+        echo "  sudo npm install -g peerflix"
+        return 1
+    fi
 }
 
 play_direct() {

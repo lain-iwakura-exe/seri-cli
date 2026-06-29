@@ -8,7 +8,7 @@
 ```
 
 > **Stream movies & TV series from your terminal on Linux — inspired by ani-cli**  
-> Uses Torrentio + torrentflix + MPV. No Stremio required. No browser needed.
+> Uses Torrentio + peerflix + MPV. No Stremio required. No browser needed.
 
 ---
 
@@ -32,25 +32,25 @@ Install these before installing seri-cli:
 ### Arch / CachyOS / EndeavourOS / Manjaro
 ```bash
 sudo pacman -S curl mpv fzf jq python nodejs npm
-sudo npm install -g torrentflix
+sudo npm install -g peerflix
 ```
 
 ### Debian / Ubuntu / Linux Mint
 ```bash
 sudo apt install curl mpv fzf jq python3 nodejs npm
-sudo npm install -g torrentflix
+sudo npm install -g peerflix
 ```
 
 ### Fedora
 ```bash
 sudo dnf install curl mpv fzf jq python3 nodejs npm
-sudo npm install -g torrentflix
+sudo npm install -g peerflix
 ```
 
 ### openSUSE
 ```bash
 sudo zypper install curl mpv fzf jq python3 nodejs npm
-sudo npm install -g torrentflix
+sudo npm install -g peerflix
 ```
 
 | Package | Required | Purpose |
@@ -60,13 +60,13 @@ sudo npm install -g torrentflix
 | `fzf` | ✅ Yes | Interactive menus |
 | `jq` | ✅ Yes | JSON parsing |
 | `python3` | ✅ Yes | URL encoding |
-| `nodejs` + `npm` | ✅ Yes | Required for torrentflix |
-| `torrentflix` | ✅ Yes | Torrent streaming to MPV |
+| `nodejs` + `npm` | ✅ Yes | Required for peerflix |
+| `peerflix` | ✅ Yes | Torrent streaming to MPV |
 
 > ❌ Stremio — NOT required  
 > ❌ Stremio account — NOT required  
 > ❌ Any browser — NOT required  
-> ❌ peerflix — NOT required  
+> ❌ torrentflix — NOT required  
 > ❌ webtorrent — NOT required
 
 ---
@@ -116,20 +116,22 @@ seri-cli "Fight Club"
 2. Get the IMDB ID automatically
 3. Query **Torrentio** for stream sources
 4. Pick best quality (1080p BluRay preferred)
-5. Stream directly in **MPV** via torrentflix
+5. peerflix serves the torrent on localhost
+6. **MPV** opens automatically and plays the stream
 
 ---
 
 ## Troubleshooting
 
 **MPV does not open**
-→ Make sure torrentflix is installed: `sudo npm install -g torrentflix`
+→ Make sure peerflix is installed: `sudo npm install -g peerflix`  
+→ Wait up to 30 seconds for buffering
 
 **No streams found**
 → Try a more specific search with the year: `seri-cli "Fight Club 1999"`
 
 **Stream is slow or stuck**
-→ The torrent may have few seeders. Press Ctrl+C and try again — seri-cli will try the next available stream
+→ The torrent may have few seeders. Press Ctrl+C and run seri-cli again — it will try the next available stream automatically
 
 **fzf menu is empty**
 → Check your internet connection
