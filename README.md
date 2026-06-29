@@ -8,7 +8,7 @@
 ```
 
 > **Stream movies & TV series from your terminal on Linux — inspired by ani-cli**  
-> Uses Torrentio + MPV. No Stremio required. No browser needed.
+> Uses Torrentio + torrentflix + MPV. No Stremio required. No browser needed.
 
 ---
 
@@ -20,7 +20,7 @@
 - 🎚️ Quality picker — 1080p preferred automatically
 - 🔁 Replay / Next episode / Different episode menu
 - 📝 Watch history
-- ⚡ Streams via Torrentio (torrent-based, always working)
+- ⚡ Streams via Torrentio — always working
 - 🐧 Works on Arch, Debian, Fedora, openSUSE and any Linux distro
 
 ---
@@ -32,25 +32,25 @@ Install these before installing seri-cli:
 ### Arch / CachyOS / EndeavourOS / Manjaro
 ```bash
 sudo pacman -S curl mpv fzf jq python nodejs npm
-sudo npm install -g peerflix webtorrent-cli
+sudo npm install -g torrentflix
 ```
 
 ### Debian / Ubuntu / Linux Mint
 ```bash
 sudo apt install curl mpv fzf jq python3 nodejs npm
-sudo npm install -g peerflix webtorrent-cli
+sudo npm install -g torrentflix
 ```
 
 ### Fedora
 ```bash
 sudo dnf install curl mpv fzf jq python3 nodejs npm
-sudo npm install -g peerflix webtorrent-cli
+sudo npm install -g torrentflix
 ```
 
 ### openSUSE
 ```bash
 sudo zypper install curl mpv fzf jq python3 nodejs npm
-sudo npm install -g peerflix webtorrent-cli
+sudo npm install -g torrentflix
 ```
 
 | Package | Required | Purpose |
@@ -60,14 +60,14 @@ sudo npm install -g peerflix webtorrent-cli
 | `fzf` | ✅ Yes | Interactive menus |
 | `jq` | ✅ Yes | JSON parsing |
 | `python3` | ✅ Yes | URL encoding |
-| `nodejs` + `npm` | ✅ Yes | Required for torrent streaming |
-| `peerflix` | ✅ Yes | Torrent streaming to MPV |
-| `webtorrent-cli` | ⚡ Recommended | Faster than peerflix |
-| `yt-dlp` | ⚡ Optional | Direct stream fallback |
+| `nodejs` + `npm` | ✅ Yes | Required for torrentflix |
+| `torrentflix` | ✅ Yes | Torrent streaming to MPV |
 
 > ❌ Stremio — NOT required  
 > ❌ Stremio account — NOT required  
-> ❌ Any browser — NOT required
+> ❌ Any browser — NOT required  
+> ❌ peerflix — NOT required  
+> ❌ webtorrent — NOT required
 
 ---
 
@@ -105,33 +105,34 @@ seri-cli "Breaking Bad"
 seri-cli "Interstellar"
 seri-cli "The Dark Knight"
 seri-cli "House of the Dragon"
-seri-cli "Dune"
+seri-cli "Fight Club"
 ```
 
 ---
 
 ## How it works
 
-1. Search TMDB for your title (movies & shows 1980–2026)
+1. Search TMDB for your title (movies & shows 1980-2026)
 2. Get the IMDB ID automatically
 3. Query **Torrentio** for stream sources
 4. Pick best quality (1080p BluRay preferred)
-5. Stream in **MPV** via webtorrent or peerflix
+5. Stream directly in **MPV** via torrentflix
 
 ---
 
 ## Troubleshooting
 
-**MPV doesn't open**
-→ Wait 20-30 seconds — peerflix buffers before launching MPV  
-→ Or install webtorrent (faster): `sudo npm install -g webtorrent-cli`
+**MPV does not open**
+→ Make sure torrentflix is installed: `sudo npm install -g torrentflix`
 
 **No streams found**
-→ Try a more popular title first  
-→ Check internet connection
+→ Try a more specific search with the year: `seri-cli "Fight Club 1999"`
+
+**Stream is slow or stuck**
+→ The torrent may have few seeders. Press Ctrl+C and try again — seri-cli will try the next available stream
 
 **fzf menu is empty**
-→ Check your internet connection (TMDB must be reachable)
+→ Check your internet connection
 
 **Permission denied**
 → `sudo chmod +x /usr/local/bin/seri-cli`

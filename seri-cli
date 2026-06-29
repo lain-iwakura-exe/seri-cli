@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ============================================================
-#  seri-cli v4.2.0 — stream series & films on Linux via MPV
+#  seri-cli v4.3.0 — stream series & films on Linux via MPV
 #  License: GPL-3.0
 # ============================================================
 
-VERSION="4.2.0"
+VERSION="4.3.0"
 QUALITY="${QUALITY:-best}"
 HISTORY_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/seri-cli/history"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/seri-cli/config"
@@ -44,10 +44,9 @@ dep_check() {
         command -v dnf    &>/dev/null && echo "  sudo dnf install ${missing[*]}"
         exit 1
     fi
-    if ! command -v peerflix &>/dev/null && ! command -v webtorrent &>/dev/null; then
-        msg_err "Missing torrent streamer. Install one:"
-        echo "  sudo npm install -g peerflix"
-        echo "  sudo npm install -g webtorrent-cli"
+    if ! command -v torrentflix &>/dev/null; then
+        msg_err "Missing torrentflix. Install it:"
+        echo "  sudo npm install -g torrentflix"
         exit 1
     fi
 }
@@ -120,27 +119,23 @@ get_all_hashes() {
     local json="$1"
     local result
 
-    # 1080p
     result=$(echo "$json" | jq -r '
         .streams[] | select(.infoHash != null) |
         select(.title != null and (.title | test("1080"))) |
         [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
     ' 2>/dev/null)
 
-    # 720p
     result+=$'\n'$(echo "$json" | jq -r '
         .streams[] | select(.infoHash != null) |
         select(.title != null and (.title | test("720"))) |
         [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
     ' 2>/dev/null)
 
-    # Everything else
     result+=$'\n'$(echo "$json" | jq -r '
         .streams[] | select(.infoHash != null) |
         [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
     ' 2>/dev/null)
 
-    # Deduplicate and remove empty lines
     echo "$result" | grep -v '^$' | awk '!seen[$0]++' | head -10
 }
 
@@ -164,22 +159,9 @@ play_torrent() {
 
     msg_play "Playing: ${title}"
     msg_info "Hash: ${hash:0:12}... FileIdx: ${file_idx}"
+    msg_info "Streaming via torrentflix..."
 
-    if command -v webtorrent &>/dev/null; then
-        msg_info "Streaming via webtorrent..."
-        if [[ "$file_idx" == "0" ]]; then
-            webtorrent "$magnet" --mpv
-        else
-            webtorrent "$magnet" --mpv --select "$file_idx"
-        fi
-    elif command -v peerflix &>/dev/null; then
-        msg_info "Streaming via peerflix, wait ~30s for MPV..."
-        if [[ "$file_idx" == "0" ]]; then
-            peerflix "$magnet" --mpv
-        else
-            peerflix "$magnet" --mpv --index "$file_idx"
-        fi
-    fi
+    torrentflix "$magnet" --player mpv
     return $?
 }
 
@@ -232,10 +214,16 @@ try_all_streams() {
 
         msg_info "Stream ${count}/${total}"
         play_torrent "$hash" "${file_idx:-0}" "$title"
-        return 0  # return after first attempt — user can retry
+        local exit_code=$?
+
+        if [[ $exit_code -eq 0 ]]; then
+            return 0
+        fi
+
+        msg_warn "Stream ${count} failed, trying next..."
     done <<< "$all_hashes"
 
-    msg_err "No streams could be played."
+    msg_err "All streams failed."
     return 1
 }
 
@@ -416,8 +404,7 @@ ${c_bld}EXAMPLES${c_rst}
 
 ${c_bld}DEPS${c_rst}
   Required : curl mpv fzf jq python3 nodejs npm
-  Torrent  : peerflix OR webtorrent-cli
-  Optional : yt-dlp
+  Streaming: torrentflix
 EOF
 }
 
