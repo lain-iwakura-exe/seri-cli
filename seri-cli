@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================
-#  seri-cli v4.5.1 — stream series & films on Linux via MPV
+#  seri-cli v4.5.2 — stream series & films on Linux via MPV
 #  NO TORRENTS — Direct streaming from web sources
 #  License: GPL-3.0
 # ============================================================
 
-VERSION="4.5.1"
+VERSION="4.5.2"
 QUALITY="${QUALITY:-best}"
 HISTORY_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/seri-cli/history"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/seri-cli/config"
@@ -45,10 +45,9 @@ dep_check() {
         command -v dnf    &>/dev/null && echo "  sudo dnf install ${missing[*]}"
         exit 1
     fi
-    # yt-dlp is optional but recommended
     if ! command -v yt-dlp &>/dev/null; then
-        msg_warn "yt-dlp not found (optional but strongly recommended)"
-        msg_info "Install it: sudo apt install yt-dlp  or  pip install yt-dlp"
+        msg_warn "yt-dlp not found (strongly recommended)"
+        msg_info "Install it: sudo apt install yt-dlp"
     fi
 }
 
@@ -145,12 +144,12 @@ get_vidplay_stream() {
     fi
 }
 
+# Fixed: Returns ONLY the URL, no extra text
 get_stream_url() {
     local tmdb_id="$1"
     local type="$2"
     local season="$3"
     local episode="$4"
-    local title="$5"
     
     local sources=(
         "vidsrc:$(get_vidsrc_stream "$tmdb_id" "$type" "$season" "$episode")"
@@ -162,24 +161,17 @@ get_stream_url() {
         local name="${source%%:*}"
         local url="${source#*:}"
         
-        msg_info "Trying ${name}..."
+        msg_info "Trying ${name}..." >&2
         
-        # Quick accessibility check
-        if curl -sf --max-time 3 -o /dev/null -w "%{http_code}" "$url" | grep -q "200"; then
-            msg_ok "Found stream on ${name}"
+        # Check if URL is accessible
+        if curl -sf --max-time 3 -o /dev/null -w "%{http_code}" "$url" 2>/dev/null | grep -q "200"; then
+            msg_ok "Found stream on ${name}" >&2
             echo "$url"
             return 0
         fi
-        
-        local status
-        status=$(curl -sf --max-time 3 -o /dev/null -w "%{http_code}" "$url" 2>/dev/null)
-        if [[ "$status" == "403" ]] || [[ "$status" == "404" ]]; then
-            msg_warn "${name} returned ${status}, trying next..."
-            continue
-        fi
     done
     
-    msg_warn "All sources failed. Try installing yt-dlp for better extraction."
+    msg_warn "All sources failed" >&2
     return 1
 }
 
@@ -187,11 +179,15 @@ get_stream_url() {
 play_direct() {
     local url="$1" title="$2"
     
-    # Clean URL (remove newlines)
-    url=$(echo "$url" | tr -d '\n\r')
+    # Clean URL - remove any extra text, keep only the URL
+    url=$(echo "$url" | grep -o 'https://[^ ]*' | head -1)
+    
+    if [[ -z "$url" ]]; then
+        msg_err "Invalid URL"
+        return 1
+    fi
     
     msg_play "Playing: ${title}"
-    msg_info "Stream URL: ${url}"
     msg_info "Press 'q' to quit, 'space' to pause"
     
     # Use yt-dlp to extract the actual video stream
@@ -209,8 +205,7 @@ play_direct() {
             --hls-bitrate=max \
             "$url"
     else
-        msg_warn "yt-dlp not found. Install it for better streaming."
-        msg_info "Trying direct mpv without yt-dlp..."
+        msg_warn "yt-dlp not found - trying direct"
         mpv \
             --title="${title}" \
             --force-window=yes \
@@ -220,14 +215,12 @@ play_direct() {
             --cache=yes \
             --cache-secs=300 \
             --force-seekable=yes \
-            --hls-bitrate=max \
             --user-agent="Mozilla/5.0" \
             --referrer="https://vidsrc.to/" \
             "$url"
     fi
     
-    local exit_code=$?
-    return $exit_code
+    return $?
 }
 
 # ── Main search and play ─────────────────────────────────────
@@ -259,14 +252,13 @@ search_and_play() {
 
     if [[ "$media_type" == "movie" ]]; then
         local stream_url
-        stream_url=$(get_stream_url "$media_id" "movie" "" "" "$title")
+        stream_url=$(get_stream_url "$media_id" "movie" "" "")
         
         if [[ -n "$stream_url" ]]; then
             history_add "movie|${media_id}|${title}"
             play_direct "$stream_url" "$title"
         else
             msg_err "Could not find any working stream for: ${title}"
-            msg_info "Try: https://vidsrc.to/embed/movie/${media_id} in your browser"
         fi
 
     else
@@ -284,14 +276,13 @@ search_and_play() {
             ep=$(echo "$sep"     | cut -d'|' -f2)
 
             msg_info "Getting stream for: ${title} S${season}E${ep}"
-            stream_url=$(get_stream_url "$media_id" "tv" "$season" "$ep" "$title")
+            stream_url=$(get_stream_url "$media_id" "tv" "$season" "$ep")
             
             if [[ -n "$stream_url" ]]; then
                 history_add "tv|${media_id}|${title}|S${season}E${ep}"
                 play_direct "$stream_url" "${title} S${season}E${ep}"
             else
                 msg_err "Could not find stream for ${title} S${season}E${ep}"
-                msg_info "Try: https://vidsrc.to/embed/tv/${media_id}/${season}/${ep} in your browser"
             fi
 
             local action
@@ -302,7 +293,7 @@ search_and_play() {
                 "Next episode")
                     ep=$((ep + 1))
                     msg_info "Getting next episode..."
-                    stream_url=$(get_stream_url "$media_id" "tv" "$season" "$ep" "$title")
+                    stream_url=$(get_stream_url "$media_id" "tv" "$season" "$ep")
                     play_direct "$stream_url" "${title} S${season}E${ep}" ;;
                 "Different episode") continue ;;
                 *) break ;;
@@ -399,15 +390,14 @@ ${c_bld}EXAMPLES${c_rst}
   seri-cli "Breaking Bad"
   seri-cli "Interstellar"
   seri-cli "The Dark Knight"
-  seri-cli "Fight Club"
 
 ${c_bld}DEPS${c_rst}
   Required: curl mpv fzf jq
-  Recommended: yt-dlp (install via apt/pip)
+  Recommended: yt-dlp (sudo apt install yt-dlp)
 
 ${c_bld}STREAM SOURCES${c_rst}
-  Uses: vidsrc.to, 2embed.cc, vidplay.online
-  No torrents, no peerflix, no npm required!
+  vidsrc.to, 2embed.cc, vidplay.online
+  No torrents, no peerflix, no npm!
 EOF
 }
 
