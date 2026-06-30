@@ -4,7 +4,7 @@
 #  License: GPL-3.0
 # ============================================================
 
-VERSION="4.6.0"
+VERSION="4.7.0"
 QUALITY="${QUALITY:-best}"
 ARABIC_PRIORITY="${ARABIC_PRIORITY:-yes}"
 HISTORY_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/seri-cli/history"
@@ -121,10 +121,9 @@ get_streams() {
 get_all_hashes() {
     local json="$1"
     local result=""
-    local arabic_pattern="ARABIC|Arabic|مترجم|AR Sub|Arab Sub|ARA |\\.AR\\.|\\[AR\\]"
+    local arabic_pattern="ARABIC|Arabic|مترجم|AR Sub|Arab Sub|ARA |\\.AR\\.|\\[AR\\]|Arabic Subs"
 
-    if [[ "$ARABIC_PRIORITY" == "yes" ]]; then
-    # Arabic + 1080p
+    # STRICT Arabic-only mode — 1080p first, then 720p, then any Arabic stream
     result=$(echo "$json" | jq -r --arg pat "$arabic_pattern" '
         .streams[] | select(.infoHash != null) |
         select(.title != null and (.title | test($pat; "i"))) |
@@ -132,7 +131,6 @@ get_all_hashes() {
         [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
     ' 2>/dev/null)
 
-    # Arabic + 720p
     result+=$'\n'$(echo "$json" | jq -r --arg pat "$arabic_pattern" '
         .streams[] | select(.infoHash != null) |
         select(.title != null and (.title | test($pat; "i"))) |
@@ -140,31 +138,9 @@ get_all_hashes() {
         [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
     ' 2>/dev/null)
 
-    # Arabic, any quality
     result+=$'\n'$(echo "$json" | jq -r --arg pat "$arabic_pattern" '
         .streams[] | select(.infoHash != null) |
         select(.title != null and (.title | test($pat; "i"))) |
-        [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
-    ' 2>/dev/null)
-    fi
-
-    # Non-Arabic 1080p
-    result+=$'\n'$(echo "$json" | jq -r '
-        .streams[] | select(.infoHash != null) |
-        select(.title != null and (.title | test("1080"))) |
-        [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
-    ' 2>/dev/null)
-
-    # Non-Arabic 720p
-    result+=$'\n'$(echo "$json" | jq -r '
-        .streams[] | select(.infoHash != null) |
-        select(.title != null and (.title | test("720"))) |
-        [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
-    ' 2>/dev/null)
-
-    # Everything else
-    result+=$'\n'$(echo "$json" | jq -r '
-        .streams[] | select(.infoHash != null) |
         [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
     ' 2>/dev/null)
 
@@ -296,7 +272,8 @@ try_all_streams() {
     all_hashes=$(get_all_hashes "$streams_json")
 
     if [[ -z "$all_hashes" ]]; then
-        msg_err "No streams found."
+        msg_err "No Arabic-subbed streams found for this title."
+        msg_warn "This title may not have Arabic subtitles available on Torrentio."
         return 1
     fi
 
