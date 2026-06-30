@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# seri-cli installer — Direct streaming version (no torrents)
+# seri-cli installer — torrent version (requires peerflix)
 
 set -euo pipefail
 
-VERSION="5.0.0"
+VERSION="4.5.0"
 REPO="https://raw.githubusercontent.com/lain-iwakura-exe/seri-cli/main"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 SCRIPT_NAME="seri-cli"
@@ -28,7 +28,7 @@ banner() {
  \__ \  __/ |   | |____| (__| | |
  |___/\___|_|   |_|     \___|_|_|
 EOF
-    printf "${RST}  installer v${VERSION} — No torrents required\n\n"
+    printf "${RST}  installer v${VERSION} — Torrent streaming\n\n"
 }
 
 detect_distro() {
@@ -47,7 +47,7 @@ install_deps() {
     local distro="$1"
     local missing=()
 
-    for cmd in curl mpv fzf jq; do
+    for cmd in curl mpv fzf jq python3 nodejs npm; do
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
 
@@ -63,6 +63,7 @@ install_deps() {
                 ;;
             debian)
                 info "Installing missing deps via apt…"
+                sudo apt-get update -y
                 sudo apt-get install -y "${missing[@]}" || die "apt install failed"
                 ;;
             fedora)
@@ -75,13 +76,14 @@ install_deps() {
         esac
     fi
 
-    # Optional: yt-dlp for better stream extraction
-    if ! command -v yt-dlp &>/dev/null; then
-        warn "yt-dlp not found (optional but recommended)"
-        info "Install it with: sudo pacman -S yt-dlp  OR  pip install yt-dlp"
+    # Install peerflix globally
+    if ! command -v peerflix &>/dev/null; then
+        info "Installing peerflix via npm…"
+        sudo npm install -g peerflix || die "peerflix install failed"
+        ok "peerflix installed"
+    else
+        ok "peerflix already installed"
     fi
-
-    ok "All dependencies satisfied!"
 }
 
 install_sericli() {
@@ -113,7 +115,7 @@ install_man_page() {
     sudo mkdir -p "$man_dir"
 
     cat << 'MANPAGE' | gzip | sudo tee "${man_file}.gz" > /dev/null
-.TH SERI-CLI 1 "2024" "seri-cli 5.0.0" "User Commands"
+.TH SERI-CLI 1 "2024" "seri-cli 4.5.0" "User Commands"
 .SH NAME
 seri-cli \- stream series, movies and films in MPV on Linux
 .SH SYNOPSIS
@@ -156,7 +158,7 @@ Watch history.
 .SH SEE ALSO
 .BR mpv (1),
 .BR fzf (1),
-.BR yt-dlp (1)
+.BR peerflix (1)
 .SH AUTHOR
 seri-cli contributors
 MANPAGE
@@ -214,8 +216,7 @@ main() {
 
     printf "\n${CYN}${BOLD}All done!${RST}\n"
     printf "  Run ${BOLD}seri-cli --help${RST} to get started.\n"
-    printf "  Run ${BOLD}seri-cli \"Breaking Bad\"${RST} to start streaming.\n"
-    printf "\n${GRN}✓ No torrents required!${RST}\n\n"
+    printf "  Run ${BOLD}seri-cli \"Breaking Bad\"${RST} to start streaming.\n\n"
 }
 
 main "$@"

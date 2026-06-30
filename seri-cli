@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================
-#  seri-cli v4.5.3 — stream series & films on Linux via MPV
-#  NO TORRENTS — Direct streaming from web sources
+#  seri-cli v4.5.0 — stream series & films on Linux via MPV
+#  Uses torrents (Torrentio + peerflix) – reliable
 #  License: GPL-3.0
 # ============================================================
 
-VERSION="4.5.3"
+VERSION="4.5.0"
 QUALITY="${QUALITY:-best}"
 HISTORY_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/seri-cli/history"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/seri-cli/config"
@@ -30,12 +30,12 @@ banner() {
  \__ \  __/ |   | |____| (__| | |
  |___/\___|_|   |_|     \___|_|_|
 EOF
-    printf "${c_rst}${c_dim}  direct streaming • no torrents • v${VERSION}${c_rst}\n\n"
+    printf "${c_rst}${c_dim}  torrent streaming • v${VERSION}${c_rst}\n\n"
 }
 
 dep_check() {
     local missing=()
-    for cmd in curl mpv fzf jq; do
+    for cmd in curl mpv fzf jq python3; do
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
     if [[ ${#missing[@]} -gt 0 ]]; then
@@ -45,9 +45,10 @@ dep_check() {
         command -v dnf    &>/dev/null && echo "  sudo dnf install ${missing[*]}"
         exit 1
     fi
-    if ! command -v yt-dlp &>/dev/null; then
-        msg_warn "yt-dlp not found - installing..."
-        sudo apt install -y yt-dlp || pip install yt-dlp
+    if ! command -v peerflix &>/dev/null; then
+        msg_err "peerflix not found. Install it:"
+        echo "  sudo npm install -g peerflix"
+        exit 1
     fi
 }
 
@@ -57,20 +58,7 @@ init_dirs() {
 }
 
 urlencode() {
-    local string="$1"
-    local strlen=${#string}
-    local encoded=""
-    local pos c o
-    
-    for (( pos=0 ; pos<strlen ; pos++ )); do
-        c=${string:$pos:1}
-        case "$c" in
-            [-_.~a-zA-Z0-9] ) o="${c}" ;;
-            * ) printf -v o '%%%02x' "'$c" ;;
-        esac
-        encoded+="${o}"
-    done
-    echo "$encoded"
+    python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$1"
 }
 
 history_add() { echo "$1" >> "$HISTORY_FILE"; }
@@ -93,6 +81,12 @@ tmdb_season() {
     curl -sf "${TMDB_BASE}/tv/${1}/season/${2}?api_key=${TMDB_KEY}"
 }
 
+tmdb_to_imdb() {
+    local type="$1" tmdb_id="$2"
+    curl -sf "${TMDB_BASE}/${type}/${tmdb_id}/external_ids?api_key=${TMDB_KEY}" \
+        | jq -r '.imdb_id // empty' 2>/dev/null
+}
+
 parse_results() {
     echo "$1" | jq -r '
         .results[] |
@@ -104,122 +98,191 @@ parse_results() {
     ' 2>/dev/null
 }
 
-# ── DIRECT STREAMING SCRAPERS ─────────────────────────────────
-# Use 2embed.cc - works with yt-dlp
-get_stream_url() {
-    local tmdb_id="$1"
-    local type="$2"
-    local season="$3"
-    local episode="$4"
-    
+# ── Torrentio ─────────────────────────────────────────────────
+get_streams() {
+    local type="$1" imdb_id="$2" season="$3" ep="$4"
+    local stype sid
+
     if [[ "$type" == "movie" ]]; then
-        echo "https://www.2embed.cc/embed/${tmdb_id}"
+        stype="movie"
+        sid="${imdb_id}"
     else
-        echo "https://www.2embed.cc/embed/${tmdb_id}/${season}/${episode}"
+        stype="series"
+        sid="${imdb_id}:${season}:${ep}"
     fi
+
+    curl -sf --max-time 15 \
+        "https://torrentio.strem.fun/stream/${stype}/${sid}.json" 2>/dev/null
+}
+
+# Returns ordered list of hash:fileidx — 1080p first, then 720p, then rest
+get_all_hashes() {
+    local json="$1"
+    local result
+
+    result=$(echo "$json" | jq -r '
+        .streams[] | select(.infoHash != null) |
+        select(.title != null and (.title | test("1080"))) |
+        [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
+    ' 2>/dev/null)
+
+    result+=$'\n'$(echo "$json" | jq -r '
+        .streams[] | select(.infoHash != null) |
+        select(.title != null and (.title | test("720"))) |
+        [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
+    ' 2>/dev/null)
+
+    result+=$'\n'$(echo "$json" | jq -r '
+        .streams[] | select(.infoHash != null) |
+        [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
+    ' 2>/dev/null)
+
+    echo "$result" | grep -v '^$' | awk '!seen[$0]++' | head -10
+}
+
+# ── Build magnet ──────────────────────────────────────────────
+build_magnet() {
+    local hash="$1"
+    local magnet="magnet:?xt=urn:btih:${hash}"
+    magnet+="&tr=udp%3A%2F%2Fopen.demonii.com%3A1337%2Fannounce"
+    magnet+="&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A80%2Fannounce"
+    magnet+="&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce"
+    magnet+="&tr=udp%3A%2F%2Fp4p.arenabg.com%3A1337%2Fannounce"
+    magnet+="&tr=udp%3A%2F%2Ftracker.leechers-paradise.org%3A6969%2Fannounce"
+    echo "$magnet"
 }
 
 # ── Play ──────────────────────────────────────────────────────
-play_direct() {
-    local url="$1" title="$2"
-    
+play_torrent() {
+    local hash="$1" file_idx="$2" title="$3"
+    local magnet
+    magnet=$(build_magnet "$hash")
+
     msg_play "Playing: ${title}"
-    msg_info "Extracting video stream..."
-    msg_info "Press 'q' to quit, 'space' to pause"
-    
-    # Use yt-dlp with mpv for best results
-    mpv \
-        --ytdl \
-        --ytdl-format="bestvideo[height<=?1080]+bestaudio/best" \
-        --title="${title}" \
-        --force-window=yes \
-        --keep-open=yes \
-        --osd-level=1 \
-        --save-position-on-quit \
-        --cache=yes \
-        --cache-secs=300 \
-        --user-agent="Mozilla/5.0" \
-        --referrer="https://2embed.cc/" \
-        "$url"
-    
-    return $?
-}
+    msg_info "Hash: ${hash:0:12}... FileIdx: ${file_idx}"
 
-# ── Main search and play ─────────────────────────────────────
-search_and_play() {
-    local query="$1"
-    msg_info "Searching: ${query}"
-
-    local json results
-    json=$(tmdb_search "$query")
-
-    if [[ -z "$json" ]] || echo "$json" | jq -e '.results | length == 0' &>/dev/null; then
-        msg_err "No results found."
+    if ! command -v peerflix &>/dev/null; then
+        msg_err "peerflix not found. Install: sudo npm install -g peerflix"
         return 1
     fi
 
-    results=$(parse_results "$json")
-    [[ -z "$results" ]] && { msg_err "No results."; return 1; }
+    # Kill any existing peerflix
+    pkill -f peerflix 2>/dev/null
+    sleep 1
 
-    local row
-    row=$(pick_title "$results" "$query")
-    [[ $? -ne 0 || -z "$row" ]] && return 0
+    # Start peerflix HTTP server in background
+    msg_info "Starting peerflix HTTP server..."
+    if [[ "$file_idx" == "0" ]]; then
+        peerflix "$magnet" --port 8888 &>/tmp/peerflix.log &
+    else
+        peerflix "$magnet" --port 8888 --index "$file_idx" &>/tmp/peerflix.log &
+    fi
+    local peerflix_pid=$!
 
-    local media_type media_id title
-    media_type=$(echo "$row" | cut -f1)
-    media_id=$(echo "$row"   | cut -f2)
-    title=$(echo "$row"      | cut -f3)
+    # Wait for server AND check for peers
+    msg_info "Waiting for peers and buffering..."
+    local tries=0
+    local server_up=0
+    local has_peers=0
 
-    if [[ "$media_type" == "movie" ]]; then
-        local stream_url
-        stream_url=$(get_stream_url "$media_id" "movie" "" "")
-        
-        if [[ -n "$stream_url" ]]; then
-            history_add "movie|${media_id}|${title}"
-            play_direct "$stream_url" "$title"
-        else
-            msg_err "Could not find stream for: ${title}"
+    while [[ $tries -lt 30 ]]; do
+        sleep 2
+        tries=$((tries + 1))
+
+        # Check if server is up
+        if curl -sf --max-time 1 "http://localhost:8888" &>/dev/null; then
+            server_up=1
         fi
 
-    else
-        local details total_seasons
-        details=$(tmdb_details "$media_id" "tv")
-        total_seasons=$(echo "$details" | jq -r '.number_of_seasons // 1')
-        local season ep stream_url
+        # Check peers from peerflix log
+        local peer_count
+        peer_count=$(grep -oP "from \K\d+(?=/\d+ peers)" /tmp/peerflix.log 2>/dev/null | tail -1)
+        if [[ -n "$peer_count" ]] && [[ "$peer_count" -gt 0 ]]; then
+            has_peers=1
+        fi
 
-        while true; do
-            local sep
-            sep=$(pick_episode "$media_id" "$title" "$total_seasons")
-            [[ $? -ne 0 || -z "$sep" ]] && break
-
-            season=$(echo "$sep" | cut -d'|' -f1)
-            ep=$(echo "$sep"     | cut -d'|' -f2)
-
-            msg_info "Streaming: ${title} S${season}E${ep}"
-            stream_url=$(get_stream_url "$media_id" "tv" "$season" "$ep")
-            
-            if [[ -n "$stream_url" ]]; then
-                history_add "tv|${media_id}|${title}|S${season}E${ep}"
-                play_direct "$stream_url" "${title} S${season}E${ep}"
-            else
-                msg_err "Could not find stream for ${title} S${season}E${ep}"
+        # Check for 0/0 peers after 10 seconds — dead torrent, skip it
+        if [[ $tries -ge 5 ]]; then
+            local peer_line
+            peer_line=$(grep "peers" /tmp/peerflix.log 2>/dev/null | tail -1)
+            if echo "$peer_line" | grep -q "0/0 peers"; then
+                msg_warn "No peers found for this stream, skipping..."
+                kill "$peerflix_pid" 2>/dev/null
+                pkill -f peerflix 2>/dev/null
+                return 1
             fi
+        fi
 
-            local action
-            action=$(what_next)
-            case "$action" in
-                "Replay")
-                    play_direct "$stream_url" "${title} S${season}E${ep}" ;;
-                "Next episode")
-                    ep=$((ep + 1))
-                    msg_info "Streaming next episode..."
-                    stream_url=$(get_stream_url "$media_id" "tv" "$season" "$ep")
-                    play_direct "$stream_url" "${title} S${season}E${ep}" ;;
-                "Different episode") continue ;;
-                *) break ;;
-            esac
-        done
+        # If server is up and has peers, launch MPV
+        if [[ $server_up -eq 1 ]] && [[ $has_peers -eq 1 ]]; then
+            break
+        fi
+    done
+
+    if [[ $server_up -eq 0 ]]; then
+        msg_warn "Stream server did not start, skipping..."
+        kill "$peerflix_pid" 2>/dev/null
+        pkill -f peerflix 2>/dev/null
+        return 1
     fi
+
+    # Launch MPV
+    msg_info "Opening MPV..."
+    mpv         --title="${title}"         --force-window=yes         --keep-open=yes         --osd-level=1         --save-position-on-quit         "http://localhost:8888"
+    local exit_code=$?
+
+    kill "$peerflix_pid" 2>/dev/null
+    pkill -f peerflix 2>/dev/null
+    return $exit_code
+}
+
+# Try streams one by one until one works
+try_all_streams() {
+    local streams_json="$1" title="$2"
+
+    # Check for direct URL first (unlikely, but keep for completeness)
+    local direct_url
+    direct_url=$(echo "$streams_json" | jq -r \
+        '.streams[] | select(.url != null) | .url' 2>/dev/null | head -1)
+    if [[ -n "$direct_url" ]]; then
+        mpv --title="$title" "$direct_url"
+        return $?
+    fi
+
+    # Try torrent streams
+    local all_hashes
+    all_hashes=$(get_all_hashes "$streams_json")
+
+    if [[ -z "$all_hashes" ]]; then
+        msg_err "No streams found."
+        return 1
+    fi
+
+    local total
+    total=$(echo "$all_hashes" | wc -l)
+    msg_info "Found ${total} streams, trying best one..."
+
+    local count=0
+    while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+        count=$((count + 1))
+        local hash file_idx
+        hash=$(echo "$entry" | cut -d: -f1)
+        file_idx=$(echo "$entry" | cut -d: -f2)
+
+        msg_info "Stream ${count}/${total}"
+        play_torrent "$hash" "${file_idx:-0}" "$title"
+        local exit_code=$?
+
+        if [[ $exit_code -eq 0 ]]; then
+            return 0
+        fi
+
+        msg_warn "Stream ${count} failed, trying next..."
+    done <<< "$all_hashes"
+
+    msg_err "All streams failed."
+    return 1
 }
 
 # ── Pickers ───────────────────────────────────────────────────
@@ -276,6 +339,83 @@ what_next() {
         --color="fg:#cdd6f4,bg:#1e1e2e,hl:#f38ba8,prompt:#f38ba8,pointer:#f5c2e7"
 }
 
+# ── Main ──────────────────────────────────────────────────────
+search_and_play() {
+    local query="$1"
+    msg_info "Searching: ${query}"
+
+    local json results
+    json=$(tmdb_search "$query")
+
+    if [[ -z "$json" ]] || echo "$json" | jq -e '.results | length == 0' &>/dev/null; then
+        msg_err "No results found."
+        return 1
+    fi
+
+    results=$(parse_results "$json")
+    [[ -z "$results" ]] && { msg_err "No results."; return 1; }
+
+    local row
+    row=$(pick_title "$results" "$query")
+    [[ $? -ne 0 || -z "$row" ]] && return 0
+
+    local media_type media_id title
+    media_type=$(echo "$row" | cut -f1)
+    media_id=$(echo "$row"   | cut -f2)
+    title=$(echo "$row"      | cut -f3)
+
+    msg_info "Fetching IMDB ID..."
+    local imdb_id
+    imdb_id=$(tmdb_to_imdb "$media_type" "$media_id")
+    if [[ -z "$imdb_id" ]]; then
+        msg_err "Could not find IMDB ID for: ${title}"
+        return 1
+    fi
+    msg_ok "IMDB ID: ${imdb_id}"
+
+    if [[ "$media_type" == "movie" ]]; then
+        msg_info "Fetching streams..."
+        local streams
+        streams=$(get_streams "movie" "$imdb_id" "" "")
+        history_add "movie|${imdb_id}|${title}"
+        try_all_streams "$streams" "$title"
+
+    else
+        local details total_seasons
+        details=$(tmdb_details "$media_id" "tv")
+        total_seasons=$(echo "$details" | jq -r '.number_of_seasons // 1')
+        local season ep streams
+
+        while true; do
+            local sep
+            sep=$(pick_episode "$media_id" "$title" "$total_seasons")
+            [[ $? -ne 0 || -z "$sep" ]] && break
+
+            season=$(echo "$sep" | cut -d'|' -f1)
+            ep=$(echo "$sep"     | cut -d'|' -f2)
+
+            msg_info "Fetching streams..."
+            streams=$(get_streams "series" "$imdb_id" "$season" "$ep")
+            history_add "tv|${imdb_id}|${title}|S${season}E${ep}"
+            try_all_streams "$streams" "${title} S${season}E${ep}"
+
+            local action
+            action=$(what_next)
+            case "$action" in
+                "Replay")
+                    try_all_streams "$streams" "${title} S${season}E${ep}" ;;
+                "Next episode")
+                    ep=$((ep + 1))
+                    msg_info "Fetching next episode..."
+                    streams=$(get_streams "series" "$imdb_id" "$season" "$ep")
+                    try_all_streams "$streams" "${title} S${season}E${ep}" ;;
+                "Different episode") continue ;;
+                *) break ;;
+            esac
+        done
+    fi
+}
+
 # ── Self Update ──────────────────────────────────────────────
 self_update() {
     msg_info "Updating seri-cli..."
@@ -309,13 +449,19 @@ ${c_bld}OPTIONS${c_rst}
 ${c_bld}EXAMPLES${c_rst}
   seri-cli "Breaking Bad"
   seri-cli "Interstellar"
+  seri-cli "The Dark Knight"
+  seri-cli "Fight Club"
 
 ${c_bld}DEPS${c_rst}
-  Required: curl mpv fzf jq yt-dlp
+  Required: curl mpv fzf jq python3 nodejs npm
+  Streaming: peerflix (npm install -g peerflix)
 
-${c_bld}STREAM SOURCE${c_rst}
-  2embed.cc - works with yt-dlp
-  No torrents, no peerflix, no npm!
+${c_bld}HOW IT WORKS${c_rst}
+  1. Searches TMDB for your title (1980-2026)
+  2. Gets IMDB ID
+  3. Queries Torrentio for torrent sources
+  4. peerflix streams the torrent to localhost
+  5. MPV plays the stream
 EOF
 }
 
