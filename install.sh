@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# seri-cli installer — curl -fsSL <url> | bash
+# seri-cli installer — Direct streaming version (no torrents)
 
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="5.0.0"
 REPO="https://raw.githubusercontent.com/lain-iwakura-exe/seri-cli/main"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 SCRIPT_NAME="seri-cli"
@@ -28,7 +28,7 @@ banner() {
  \__ \  __/ |   | |____| (__| | |
  |___/\___|_|   |_|     \___|_|_|
 EOF
-    printf "${RST}  installer v${VERSION}\n\n"
+    printf "${RST}  installer v${VERSION} — No torrents required\n\n"
 }
 
 detect_distro() {
@@ -53,34 +53,35 @@ install_deps() {
 
     if [[ ${#missing[@]} -eq 0 ]]; then
         ok "All required dependencies already installed."
-        return 0
+    else
+        warn "Missing: ${missing[*]}"
+
+        case "$distro" in
+            arch)
+                info "Installing missing deps via pacman…"
+                sudo pacman -S --noconfirm --needed "${missing[@]}" || die "pacman install failed"
+                ;;
+            debian)
+                info "Installing missing deps via apt…"
+                sudo apt-get install -y "${missing[@]}" || die "apt install failed"
+                ;;
+            fedora)
+                info "Installing missing deps via dnf…"
+                sudo dnf install -y "${missing[@]}" || die "dnf install failed"
+                ;;
+            *)
+                die "Auto-install not supported. Please install: ${missing[*]}"
+                ;;
+        esac
     fi
 
-    warn "Missing: ${missing[*]}"
-
-    case "$distro" in
-        arch)
-            info "Installing missing deps via pacman…"
-            sudo pacman -S --noconfirm --needed "${missing[@]}" || die "pacman install failed"
-            ;;
-        debian)
-            info "Installing missing deps via apt…"
-            sudo apt-get install -y "${missing[@]}" || die "apt install failed"
-            ;;
-        fedora)
-            info "Installing missing deps via dnf…"
-            sudo dnf install -y "${missing[@]}" || die "dnf install failed"
-            ;;
-        *)
-            die "Auto-install not supported on this distro. Please install: ${missing[*]}"
-            ;;
-    esac
-
-    # Optional: yt-dlp for better stream quality control
+    # Optional: yt-dlp for better stream extraction
     if ! command -v yt-dlp &>/dev/null; then
-        warn "yt-dlp not found (optional but recommended for quality control)"
-        info "Install it with: sudo pacman -S yt-dlp  OR  pipx install yt-dlp"
+        warn "yt-dlp not found (optional but recommended)"
+        info "Install it with: sudo pacman -S yt-dlp  OR  pip install yt-dlp"
     fi
+
+    ok "All dependencies satisfied!"
 }
 
 install_sericli() {
@@ -88,21 +89,12 @@ install_sericli() {
 
     info "Downloading seri-cli ${VERSION}…"
 
-    # Try to download from repo; fall back to bundled copy if offline
     if ! curl -fsSL "${REPO}/seri-cli" -o "/tmp/seri-cli.$$" 2>/dev/null; then
-        # If run via pipe (curl | bash), the script is already in memory
-        # so we try to extract it from the installer itself
-        warn "Could not reach remote repo. Checking for bundled copy…"
-        if [[ -f "/tmp/seri-cli-bundled" ]]; then
-            cp "/tmp/seri-cli-bundled" "/tmp/seri-cli.$$"
-        else
-            die "Download failed and no bundled copy found. Check your connection."
-        fi
+        die "Download failed. Check your connection."
     fi
 
     chmod +x "/tmp/seri-cli.$$"
 
-    # Install to system or user dir
     if [[ -w "$INSTALL_DIR" ]]; then
         mv "/tmp/seri-cli.$$" "$install_path"
     else
@@ -121,7 +113,7 @@ install_man_page() {
     sudo mkdir -p "$man_dir"
 
     cat << 'MANPAGE' | gzip | sudo tee "${man_file}.gz" > /dev/null
-.TH SERI-CLI 1 "2024" "seri-cli 1.0.0" "User Commands"
+.TH SERI-CLI 1 "2024" "seri-cli 5.0.0" "User Commands"
 .SH NAME
 seri-cli \- stream series, movies and films in MPV on Linux
 .SH SYNOPSIS
@@ -131,12 +123,6 @@ seri-cli \- stream series, movies and films in MPV on Linux
 seri-cli is a command-line tool for searching and streaming series, movies,
 and films from 1980 to 2026 using fzf for selection and MPV for playback.
 .SH OPTIONS
-.TP
-.B \-q, \-\-quality
-Select stream quality interactively.
-.TP
-.B \-p, \-\-provider
-Switch streaming provider.
 .TP
 .B \-H, \-\-history
 Show watch history.
@@ -159,11 +145,6 @@ seri-cli "Breaking Bad"
 Stream a movie:
 .RS
 seri-cli "The Dark Knight"
-.RE
-.PP
-Pick quality interactively:
-.RS
-seri-cli -q "Chernobyl"
 .RE
 .SH FILES
 .TP
@@ -190,7 +171,7 @@ install_shell_completion() {
     cat << 'COMP' | sudo tee "$bash_comp" > /dev/null
 _seri_cli() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
-    local opts="-q --quality -p --provider -H --history -u --update -h --help -v --version"
+    local opts="-H --history -u --update -h --help -v --version"
     COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
 }
 complete -F _seri_cli seri-cli
@@ -200,8 +181,6 @@ COMP
     local fish_comp="$HOME/.config/fish/completions/seri-cli.fish"
     mkdir -p "$(dirname "$fish_comp")"
     cat << 'FISH' > "$fish_comp"
-complete -c seri-cli -s q -l quality  -d "Select quality"
-complete -c seri-cli -s p -l provider -d "Switch provider"
 complete -c seri-cli -s H -l history  -d "Show history"
 complete -c seri-cli -s u -l update   -d "Update seri-cli"
 complete -c seri-cli -s h -l help     -d "Show help"
@@ -235,7 +214,8 @@ main() {
 
     printf "\n${CYN}${BOLD}All done!${RST}\n"
     printf "  Run ${BOLD}seri-cli --help${RST} to get started.\n"
-    printf "  Run ${BOLD}seri-cli \"Breaking Bad\"${RST} to start streaming.\n\n"
+    printf "  Run ${BOLD}seri-cli \"Breaking Bad\"${RST} to start streaming.\n"
+    printf "\n${GRN}✓ No torrents required!${RST}\n\n"
 }
 
 main "$@"
