@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================
-#  seri-cli v4.5.1 — stream series & films on Linux via MPV
+#  seri-cli v4.5.2 — stream series & films on Linux via MPV
 #  Uses torrents (Torrentio + peerflix) – reliable
 #  License: GPL-3.0
 # ============================================================
 
-VERSION="4.5.1"
+VERSION="4.5.2"
 QUALITY="${QUALITY:-best}"
 HISTORY_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/seri-cli/history"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/seri-cli/config"
@@ -152,7 +152,7 @@ build_magnet() {
     echo "$magnet"
 }
 
-# ── Play (Simplified, more robust) ──────────────────────────
+# ── Play (simplified, working) ──────────────────────────────
 play_torrent() {
     local hash="$1" file_idx="$2" title="$3"
     local magnet
@@ -165,40 +165,37 @@ play_torrent() {
     pkill -f peerflix 2>/dev/null
     sleep 1
 
-    # Use a random port to avoid conflicts
-    local port=$((8888 + RANDOM % 1000))
-    msg_info "Using port $port"
-
-    # Start peerflix HTTP server in background
+    # Start peerflix on fixed port 8888
     if [[ "$file_idx" == "0" ]]; then
-        peerflix "$magnet" --port "$port" &> "/tmp/peerflix.$$.log" &
+        peerflix "$magnet" --port 8888 > /tmp/peerflix.log 2>&1 &
     else
-        peerflix "$magnet" --port "$port" --index "$file_idx" &> "/tmp/peerflix.$$.log" &
+        peerflix "$magnet" --port 8888 --index "$file_idx" > /tmp/peerflix.log 2>&1 &
     fi
     local peerflix_pid=$!
 
-    # Wait for the server to be ready (up to 30 seconds)
+    # Wait for server to be ready (up to 30 seconds)
     msg_info "Waiting for server to start..."
-    local server_up=0
-    for i in {1..30}; do
-        if curl -sf --max-time 1 "http://localhost:${port}" &>/dev/null; then
-            server_up=1
+    local tries=0
+    local server_ready=0
+    while [[ $tries -lt 30 ]]; do
+        sleep 1
+        if curl -sf --max-time 1 "http://localhost:8888" &>/dev/null; then
+            server_ready=1
             break
         fi
-        sleep 1
+        tries=$((tries + 1))
     done
 
-    if [[ $server_up -eq 0 ]]; then
-        msg_warn "Server did not start, skipping..."
+    if [[ $server_ready -eq 0 ]]; then
+        msg_warn "Server did not start. Killing..."
         kill "$peerflix_pid" 2>/dev/null
         pkill -f peerflix 2>/dev/null
         return 1
     fi
 
-    msg_ok "Server ready, launching MPV..."
+    msg_info "Server ready, launching MPV..."
     msg_info "Press 'q' to quit, 'space' to pause"
 
-    # Launch MPV
     mpv \
         --title="${title}" \
         --force-window=yes \
@@ -207,14 +204,13 @@ play_torrent() {
         --save-position-on-quit \
         --cache=yes \
         --cache-secs=300 \
-        "http://localhost:${port}"
+        "http://localhost:8888"
+
     local exit_code=$?
 
     # Clean up
     kill "$peerflix_pid" 2>/dev/null
     pkill -f peerflix 2>/dev/null
-    rm -f "/tmp/peerflix.$$.log"
-
     return $exit_code
 }
 
