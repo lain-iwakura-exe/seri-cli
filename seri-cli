@@ -4,8 +4,9 @@
 #  License: GPL-3.0
 # ============================================================
 
-VERSION="4.5.0"
+VERSION="4.6.0"
 QUALITY="${QUALITY:-best}"
+ARABIC_PRIORITY="${ARABIC_PRIORITY:-yes}"
 HISTORY_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/seri-cli/history"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/seri-cli/config"
 TMDB_KEY="${TMDB_KEY:-037e92c800c648af4e68b0661944c690}"
@@ -114,29 +115,60 @@ get_streams() {
         "https://torrentio.strem.fun/stream/${stype}/${sid}.json" 2>/dev/null
 }
 
-# Returns ordered list of hash:fileidx — 1080p first, then 720p, then rest
+# Returns ordered list of hash:fileidx
+# Priority: Arabic-subbed 1080p > Arabic-subbed 720p > Arabic-subbed any >
+#           1080p > 720p > anything else
 get_all_hashes() {
     local json="$1"
-    local result
+    local result=""
+    local arabic_pattern="ARABIC|Arabic|مترجم|AR Sub|Arab Sub|ARA |\\.AR\\.|\\[AR\\]"
 
-    result=$(echo "$json" | jq -r '
+    if [[ "$ARABIC_PRIORITY" == "yes" ]]; then
+    # Arabic + 1080p
+    result=$(echo "$json" | jq -r --arg pat "$arabic_pattern" '
+        .streams[] | select(.infoHash != null) |
+        select(.title != null and (.title | test($pat; "i"))) |
+        select(.title | test("1080")) |
+        [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
+    ' 2>/dev/null)
+
+    # Arabic + 720p
+    result+=$'\n'$(echo "$json" | jq -r --arg pat "$arabic_pattern" '
+        .streams[] | select(.infoHash != null) |
+        select(.title != null and (.title | test($pat; "i"))) |
+        select(.title | test("720")) |
+        [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
+    ' 2>/dev/null)
+
+    # Arabic, any quality
+    result+=$'\n'$(echo "$json" | jq -r --arg pat "$arabic_pattern" '
+        .streams[] | select(.infoHash != null) |
+        select(.title != null and (.title | test($pat; "i"))) |
+        [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
+    ' 2>/dev/null)
+    fi
+
+    # Non-Arabic 1080p
+    result+=$'\n'$(echo "$json" | jq -r '
         .streams[] | select(.infoHash != null) |
         select(.title != null and (.title | test("1080"))) |
         [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
     ' 2>/dev/null)
 
+    # Non-Arabic 720p
     result+=$'\n'$(echo "$json" | jq -r '
         .streams[] | select(.infoHash != null) |
         select(.title != null and (.title | test("720"))) |
         [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
     ' 2>/dev/null)
 
+    # Everything else
     result+=$'\n'$(echo "$json" | jq -r '
         .streams[] | select(.infoHash != null) |
         [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
     ' 2>/dev/null)
 
-    echo "$result" | grep -v '^$' | awk '!seen[$0]++' | head -15
+    echo "$result" | grep -v '^$' | awk '!seen[$0]++' | head -20
 }
 
 # ── Build magnet ──────────────────────────────────────────────
