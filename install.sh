@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-VERSION="4.5.0"
+VERSION="5.0.0"
 REPO="https://raw.githubusercontent.com/lain-iwakura-exe/seri-cli/main"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 SCRIPT_NAME="seri-cli"
@@ -49,45 +49,38 @@ install_deps() {
     local distro="$1"
     local missing=()
 
-    for cmd in curl mpv fzf jq python3 node npm; do
+    for cmd in curl mpv fzf jq python3 aria2c; do
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
 
     if [[ ${#missing[@]} -eq 0 ]]; then
         ok "All required system dependencies already installed."
-    else
-        warn "Missing: ${missing[*]}"
-        case "$distro" in
-            arch)
-                info "Installing missing deps via pacman..."
-                sudo pacman -S --noconfirm --needed curl mpv fzf jq python nodejs npm || die "pacman install failed"
-                ;;
-            debian)
-                info "Installing missing deps via apt..."
-                sudo apt-get update
-                sudo apt-get install -y curl mpv fzf jq python3 nodejs npm || die "apt install failed"
-                ;;
-            fedora)
-                info "Installing missing deps via dnf..."
-                sudo dnf install -y curl mpv fzf jq python3 nodejs npm || die "dnf install failed"
-                ;;
-            opensuse)
-                info "Installing missing deps via zypper..."
-                sudo zypper install -y curl mpv fzf jq python3 nodejs npm || die "zypper install failed"
-                ;;
-            *)
-                die "Auto-install not supported on this distro. Please install: curl mpv fzf jq python3 nodejs npm"
-                ;;
-        esac
+        return 0
     fi
 
-    # peerflix is required for torrent streaming
-    if ! command -v peerflix &>/dev/null; then
-        info "Installing peerflix (torrent streaming engine)..."
-        sudo npm install -g peerflix || die "peerflix install failed"
-    else
-        ok "peerflix already installed."
-    fi
+    warn "Missing: ${missing[*]}"
+    case "$distro" in
+        arch)
+            info "Installing missing deps via pacman..."
+            sudo pacman -S --noconfirm --needed curl mpv fzf jq python aria2 || die "pacman install failed"
+            ;;
+        debian)
+            info "Installing missing deps via apt..."
+            sudo apt-get update
+            sudo apt-get install -y curl mpv fzf jq python3 aria2 || die "apt install failed"
+            ;;
+        fedora)
+            info "Installing missing deps via dnf..."
+            sudo dnf install -y curl mpv fzf jq python3 aria2 || die "dnf install failed"
+            ;;
+        opensuse)
+            info "Installing missing deps via zypper..."
+            sudo zypper install -y curl mpv fzf jq python3 aria2 || die "zypper install failed"
+            ;;
+        *)
+            die "Auto-install not supported on this distro. Please install: curl mpv fzf jq python3 aria2"
+            ;;
+    esac
 }
 
 install_sericli() {
