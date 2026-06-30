@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # ============================================================
-#  seri-cli v4.5.2 — stream series & films on Linux via MPV
-#  Uses torrents (Torrentio + peerflix) – reliable
+#  seri-cli v4.3.0 — stream series & films on Linux via MPV
 #  License: GPL-3.0
 # ============================================================
 
-VERSION="4.5.2"
+VERSION="4.5.0"
 QUALITY="${QUALITY:-best}"
 HISTORY_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/seri-cli/history"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/seri-cli/config"
@@ -17,10 +16,10 @@ c_blu='\033[0;34m'; c_cyn='\033[0;36m'; c_bld='\033[1m'
 c_dim='\033[2m';    c_rst='\033[0m'
 
 msg_info() { printf "${c_blu}[~]${c_rst} %s\n" "$*"; }
-msg_ok()   { printf "${c_grn}[✓]${c_rst} %s\n" "$*"; }
+msg_ok()   { printf "${c_grn}[v]${c_rst} %s\n" "$*"; }
 msg_warn() { printf "${c_ylw}[!]${c_rst} %s\n" "$*"; }
-msg_err()  { printf "${c_red}[✗]${c_rst} %s\n" "$*"; }
-msg_play() { printf "${c_grn}[▶]${c_rst} ${c_bld}%s${c_rst}\n" "$*"; }
+msg_err()  { printf "${c_red}[x]${c_rst} %s\n" "$*"; }
+msg_play() { printf "${c_grn}[>]${c_rst} ${c_bld}%s${c_rst}\n" "$*"; }
 
 banner() {
     printf "${c_cyn}${c_bld}"
@@ -30,7 +29,7 @@ banner() {
  \__ \  __/ |   | |____| (__| | |
  |___/\___|_|   |_|     \___|_|_|
 EOF
-    printf "${c_rst}${c_dim}  torrent streaming • v${VERSION}${c_rst}\n\n"
+    printf "${c_rst}${c_dim}  stream series & films on Linux  v${VERSION}${c_rst}\n\n"
 }
 
 dep_check() {
@@ -46,7 +45,7 @@ dep_check() {
         exit 1
     fi
     if ! command -v peerflix &>/dev/null; then
-        msg_err "peerflix not found. Install it:"
+        msg_err "Missing peerflix. Install it:"
         echo "  sudo npm install -g peerflix"
         exit 1
     fi
@@ -137,7 +136,7 @@ get_all_hashes() {
         [.infoHash, (.fileIdx // 0 | tostring)] | join(":")
     ' 2>/dev/null)
 
-    echo "$result" | grep -v '^$' | awk '!seen[$0]++' | head -10
+    echo "$result" | grep -v '^$' | awk '!seen[$0]++' | head -15
 }
 
 # ── Build magnet ──────────────────────────────────────────────
@@ -152,7 +151,7 @@ build_magnet() {
     echo "$magnet"
 }
 
-# ── Play (simplified, working) ──────────────────────────────
+# ── Play ──────────────────────────────────────────────────────
 play_torrent() {
     local hash="$1" file_idx="$2" title="$3"
     local magnet
@@ -161,70 +160,102 @@ play_torrent() {
     msg_play "Playing: ${title}"
     msg_info "Hash: ${hash:0:12}... FileIdx: ${file_idx}"
 
+    if ! command -v peerflix &>/dev/null; then
+        msg_err "peerflix not found. Install: sudo npm install -g peerflix"
+        return 1
+    fi
+
     # Kill any existing peerflix
     pkill -f peerflix 2>/dev/null
     sleep 1
 
-    # Start peerflix on fixed port 8888
+    # Start peerflix HTTP server in background
+    msg_info "Starting peerflix HTTP server..."
     if [[ "$file_idx" == "0" ]]; then
-        peerflix "$magnet" --port 8888 > /tmp/peerflix.log 2>&1 &
+        peerflix "$magnet" --port 8888 &>/tmp/peerflix.log &
     else
-        peerflix "$magnet" --port 8888 --index "$file_idx" > /tmp/peerflix.log 2>&1 &
+        peerflix "$magnet" --port 8888 --index "$file_idx" &>/tmp/peerflix.log &
     fi
     local peerflix_pid=$!
 
-    # Wait for server to be ready (up to 30 seconds)
-    msg_info "Waiting for server to start..."
+    # Wait for server AND check for peers — fail fast on dead torrents
+    msg_info "Checking for peers..."
     local tries=0
-    local server_ready=0
-    while [[ $tries -lt 30 ]]; do
+    local server_up=0
+    local has_peers=0
+    local max_wait=15   # only wait 15s before giving up on a dead stream
+
+    while [[ $tries -lt $max_wait ]]; do
         sleep 1
+        tries=$((tries + 1))
+
         if curl -sf --max-time 1 "http://localhost:8888" &>/dev/null; then
-            server_ready=1
+            server_up=1
+        fi
+
+        local peer_line
+        peer_line=$(grep "peers" /tmp/peerflix.log 2>/dev/null | tail -1)
+
+        # Dead torrent detection — 0/0 peers after 4 seconds = skip immediately
+        if [[ $tries -ge 4 ]] && echo "$peer_line" | grep -q "0/0 peers"; then
+            msg_warn "Dead torrent (0 peers), skipping..."
+            kill "$peerflix_pid" 2>/dev/null
+            pkill -f peerflix 2>/dev/null
+            return 1
+        fi
+
+        local peer_count
+        peer_count=$(echo "$peer_line" | grep -oP "from \K[0-9]+" 2>/dev/null)
+        if [[ -n "$peer_count" ]] && [[ "$peer_count" -gt 0 ]]; then
+            has_peers=1
+        fi
+
+        if [[ $server_up -eq 1 ]] && [[ $has_peers -eq 1 ]]; then
+            msg_ok "Found peers, stream is ready!"
             break
         fi
-        tries=$((tries + 1))
     done
 
-    if [[ $server_ready -eq 0 ]]; then
-        msg_warn "Server did not start. Killing..."
+    if [[ $server_up -eq 0 ]] || [[ $has_peers -eq 0 ]]; then
+        msg_warn "No peers found within ${max_wait}s, skipping this stream..."
         kill "$peerflix_pid" 2>/dev/null
         pkill -f peerflix 2>/dev/null
         return 1
     fi
 
-    msg_info "Server ready, launching MPV..."
-    msg_info "Press 'q' to quit, 'space' to pause"
+    # Launch MPV
+    msg_info "Opening MPV..."
+    mpv         --title="${title}"         --force-window=yes         --keep-open=yes         --osd-level=1         --save-position-on-quit         "http://localhost:8888"
+    local exit_code=$?
 
+    kill "$peerflix_pid" 2>/dev/null
+    pkill -f peerflix 2>/dev/null
+    return $exit_code
+}
+
+play_direct() {
+    local url="$1" title="$2"
+    msg_play "Playing: ${title}"
     mpv \
         --title="${title}" \
         --force-window=yes \
         --keep-open=yes \
         --osd-level=1 \
         --save-position-on-quit \
-        --cache=yes \
-        --cache-secs=300 \
-        "http://localhost:8888"
-
-    local exit_code=$?
-
-    # Clean up
-    kill "$peerflix_pid" 2>/dev/null
-    pkill -f peerflix 2>/dev/null
-    return $exit_code
+        --user-agent="Mozilla/5.0" \
+        "$url"
 }
 
 # Try streams one by one until one works
 try_all_streams() {
     local streams_json="$1" title="$2"
 
-    # Check for direct URL first (unlikely, but keep)
+    # Check for direct URL first
     local direct_url
     direct_url=$(echo "$streams_json" | jq -r \
         '.streams[] | select(.url != null) | .url' 2>/dev/null | head -1)
     if [[ -n "$direct_url" ]]; then
-        msg_info "Direct URL found, playing..."
-        mpv --title="$title" "$direct_url"
+        play_direct "$direct_url" "$title"
         return $?
     fi
 
@@ -318,6 +349,12 @@ what_next() {
         --color="fg:#cdd6f4,bg:#1e1e2e,hl:#f38ba8,prompt:#f38ba8,pointer:#f5c2e7"
 }
 
+select_quality() {
+    printf 'best\n1080p\n720p\n480p\n360p' | fzf \
+        --prompt="Quality > " --height=10 --border=rounded \
+        --color="fg:#cdd6f4,bg:#1e1e2e,hl:#cba6f7,prompt:#cba6f7,pointer:#f5c2e7"
+}
+
 # ── Main ──────────────────────────────────────────────────────
 search_and_play() {
     local query="$1"
@@ -351,6 +388,10 @@ search_and_play() {
         return 1
     fi
     msg_ok "IMDB ID: ${imdb_id}"
+
+    local quality
+    quality=$(select_quality)
+    [[ -z "$quality" ]] && quality="best"
 
     if [[ "$media_type" == "movie" ]]; then
         msg_info "Fetching streams..."
@@ -395,7 +436,6 @@ search_and_play() {
     fi
 }
 
-# ── Self Update ──────────────────────────────────────────────
 self_update() {
     msg_info "Updating seri-cli..."
     local path
@@ -411,7 +451,6 @@ self_update() {
     fi
 }
 
-# ── Usage ─────────────────────────────────────────────────────
 usage() {
     cat << EOF
 ${c_bld}seri-cli${c_rst} v${VERSION} -- Stream series & films on Linux
@@ -429,21 +468,14 @@ ${c_bld}EXAMPLES${c_rst}
   seri-cli "Breaking Bad"
   seri-cli "Interstellar"
   seri-cli "The Dark Knight"
+  seri-cli "Fight Club"
 
 ${c_bld}DEPS${c_rst}
-  Required: curl mpv fzf jq python3 nodejs npm
-  Streaming: peerflix (npm install -g peerflix)
-
-${c_bld}HOW IT WORKS${c_rst}
-  1. Searches TMDB for your title (1980-2026)
-  2. Gets IMDB ID
-  3. Queries Torrentio for torrent sources
-  4. peerflix streams the torrent to localhost
-  5. MPV plays the stream
+  Required : curl mpv fzf jq python3 nodejs npm
+  Streaming: torrentflix
 EOF
 }
 
-# ── Main ──────────────────────────────────────────────────────
 main() {
     dep_check
     init_dirs

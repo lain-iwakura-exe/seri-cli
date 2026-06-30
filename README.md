@@ -8,7 +8,7 @@
 ```
 
 > **Stream movies & TV series from your terminal on Linux — inspired by ani-cli**  
-> **Uses torrents** (via Torrentio + peerflix) — reliable and fast.
+> Uses Torrentio + peerflix + MPV. No Stremio required. No browser needed.
 
 ---
 
@@ -66,6 +66,8 @@ sudo npm install -g peerflix
 > ❌ Stremio — NOT required  
 > ❌ Stremio account — NOT required  
 > ❌ Any browser — NOT required  
+> ❌ torrentflix — NOT required  
+> ❌ webtorrent — NOT required
 
 ---
 
@@ -104,7 +106,6 @@ seri-cli "Interstellar"
 seri-cli "The Dark Knight"
 seri-cli "House of the Dragon"
 seri-cli "Fight Club"
-seri-cli "The Lord of the Rings"
 ```
 
 ---
