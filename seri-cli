@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================
-#  seri-cli v4.5.0 — stream series & films on Linux via MPV
+#  seri-cli v4.5.1 — stream series & films on Linux via MPV
 #  NO TORRENTS — Direct streaming from web sources
 #  License: GPL-3.0
 # ============================================================
 
-VERSION="4.5.0"
+VERSION="4.5.1"
 QUALITY="${QUALITY:-best}"
 HISTORY_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/seri-cli/history"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/seri-cli/config"
@@ -44,6 +44,11 @@ dep_check() {
         command -v apt    &>/dev/null && echo "  sudo apt install ${missing[*]}"
         command -v dnf    &>/dev/null && echo "  sudo dnf install ${missing[*]}"
         exit 1
+    fi
+    # yt-dlp is optional but recommended
+    if ! command -v yt-dlp &>/dev/null; then
+        msg_warn "yt-dlp not found (optional but strongly recommended)"
+        msg_info "Install it: sudo apt install yt-dlp  or  pip install yt-dlp"
     fi
 }
 
@@ -159,6 +164,7 @@ get_stream_url() {
         
         msg_info "Trying ${name}..."
         
+        # Quick accessibility check
         if curl -sf --max-time 3 -o /dev/null -w "%{http_code}" "$url" | grep -q "200"; then
             msg_ok "Found stream on ${name}"
             echo "$url"
@@ -173,16 +179,7 @@ get_stream_url() {
         fi
     done
     
-    msg_warn "All sources failed, trying yt-dlp fallback..."
-    if command -v yt-dlp &>/dev/null; then
-        local fallback_url
-        fallback_url=$(yt-dlp -g "https://vidsrc.to/embed/${type}/${tmdb_id}" 2>/dev/null | head -1)
-        if [[ -n "$fallback_url" ]]; then
-            echo "$fallback_url"
-            return 0
-        fi
-    fi
-    
+    msg_warn "All sources failed. Try installing yt-dlp for better extraction."
     return 1
 }
 
@@ -190,24 +187,44 @@ get_stream_url() {
 play_direct() {
     local url="$1" title="$2"
     
+    # Clean URL (remove newlines)
+    url=$(echo "$url" | tr -d '\n\r')
+    
     msg_play "Playing: ${title}"
     msg_info "Stream URL: ${url}"
     msg_info "Press 'q' to quit, 'space' to pause"
     
-    mpv \
-        --title="${title}" \
-        --force-window=yes \
-        --keep-open=yes \
-        --osd-level=1 \
-        --save-position-on-quit \
-        --cache=yes \
-        --cache-secs=300 \
-        --demuxer-max-bytes=10M \
-        --force-seekable=yes \
-        --hls-bitrate=max \
-        --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
-        --referrer="https://vidsrc.to/" \
-        "$url"
+    # Use yt-dlp to extract the actual video stream
+    if command -v yt-dlp &>/dev/null; then
+        mpv \
+            --ytdl \
+            --title="${title}" \
+            --force-window=yes \
+            --keep-open=yes \
+            --osd-level=1 \
+            --save-position-on-quit \
+            --cache=yes \
+            --cache-secs=300 \
+            --force-seekable=yes \
+            --hls-bitrate=max \
+            "$url"
+    else
+        msg_warn "yt-dlp not found. Install it for better streaming."
+        msg_info "Trying direct mpv without yt-dlp..."
+        mpv \
+            --title="${title}" \
+            --force-window=yes \
+            --keep-open=yes \
+            --osd-level=1 \
+            --save-position-on-quit \
+            --cache=yes \
+            --cache-secs=300 \
+            --force-seekable=yes \
+            --hls-bitrate=max \
+            --user-agent="Mozilla/5.0" \
+            --referrer="https://vidsrc.to/" \
+            "$url"
+    fi
     
     local exit_code=$?
     return $exit_code
@@ -386,7 +403,7 @@ ${c_bld}EXAMPLES${c_rst}
 
 ${c_bld}DEPS${c_rst}
   Required: curl mpv fzf jq
-  Optional: yt-dlp (for better stream extraction)
+  Recommended: yt-dlp (install via apt/pip)
 
 ${c_bld}STREAM SOURCES${c_rst}
   Uses: vidsrc.to, 2embed.cc, vidplay.online
