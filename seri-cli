@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================
-#  seri-cli v4.5.0 — stream series & films on Linux via MPV
+#  seri-cli v4.5.1 — stream series & films on Linux via MPV
 #  Uses torrents (Torrentio + peerflix) – reliable
 #  License: GPL-3.0
 # ============================================================
 
-VERSION="4.5.0"
+VERSION="4.5.1"
 QUALITY="${QUALITY:-best}"
 HISTORY_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/seri-cli/history"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/seri-cli/config"
@@ -152,7 +152,7 @@ build_magnet() {
     echo "$magnet"
 }
 
-# ── Play ──────────────────────────────────────────────────────
+# ── Play (Simplified, more robust) ──────────────────────────
 play_torrent() {
     local hash="$1" file_idx="$2" title="$3"
     local magnet
@@ -161,78 +161,60 @@ play_torrent() {
     msg_play "Playing: ${title}"
     msg_info "Hash: ${hash:0:12}... FileIdx: ${file_idx}"
 
-    if ! command -v peerflix &>/dev/null; then
-        msg_err "peerflix not found. Install: sudo npm install -g peerflix"
-        return 1
-    fi
-
     # Kill any existing peerflix
     pkill -f peerflix 2>/dev/null
     sleep 1
 
+    # Use a random port to avoid conflicts
+    local port=$((8888 + RANDOM % 1000))
+    msg_info "Using port $port"
+
     # Start peerflix HTTP server in background
-    msg_info "Starting peerflix HTTP server..."
     if [[ "$file_idx" == "0" ]]; then
-        peerflix "$magnet" --port 8888 &>/tmp/peerflix.log &
+        peerflix "$magnet" --port "$port" &> "/tmp/peerflix.$$.log" &
     else
-        peerflix "$magnet" --port 8888 --index "$file_idx" &>/tmp/peerflix.log &
+        peerflix "$magnet" --port "$port" --index "$file_idx" &> "/tmp/peerflix.$$.log" &
     fi
     local peerflix_pid=$!
 
-    # Wait for server AND check for peers
-    msg_info "Waiting for peers and buffering..."
-    local tries=0
+    # Wait for the server to be ready (up to 30 seconds)
+    msg_info "Waiting for server to start..."
     local server_up=0
-    local has_peers=0
-
-    while [[ $tries -lt 30 ]]; do
-        sleep 2
-        tries=$((tries + 1))
-
-        # Check if server is up
-        if curl -sf --max-time 1 "http://localhost:8888" &>/dev/null; then
+    for i in {1..30}; do
+        if curl -sf --max-time 1 "http://localhost:${port}" &>/dev/null; then
             server_up=1
-        fi
-
-        # Check peers from peerflix log
-        local peer_count
-        peer_count=$(grep -oP "from \K\d+(?=/\d+ peers)" /tmp/peerflix.log 2>/dev/null | tail -1)
-        if [[ -n "$peer_count" ]] && [[ "$peer_count" -gt 0 ]]; then
-            has_peers=1
-        fi
-
-        # Check for 0/0 peers after 10 seconds — dead torrent, skip it
-        if [[ $tries -ge 5 ]]; then
-            local peer_line
-            peer_line=$(grep "peers" /tmp/peerflix.log 2>/dev/null | tail -1)
-            if echo "$peer_line" | grep -q "0/0 peers"; then
-                msg_warn "No peers found for this stream, skipping..."
-                kill "$peerflix_pid" 2>/dev/null
-                pkill -f peerflix 2>/dev/null
-                return 1
-            fi
-        fi
-
-        # If server is up and has peers, launch MPV
-        if [[ $server_up -eq 1 ]] && [[ $has_peers -eq 1 ]]; then
             break
         fi
+        sleep 1
     done
 
     if [[ $server_up -eq 0 ]]; then
-        msg_warn "Stream server did not start, skipping..."
+        msg_warn "Server did not start, skipping..."
         kill "$peerflix_pid" 2>/dev/null
         pkill -f peerflix 2>/dev/null
         return 1
     fi
 
+    msg_ok "Server ready, launching MPV..."
+    msg_info "Press 'q' to quit, 'space' to pause"
+
     # Launch MPV
-    msg_info "Opening MPV..."
-    mpv         --title="${title}"         --force-window=yes         --keep-open=yes         --osd-level=1         --save-position-on-quit         "http://localhost:8888"
+    mpv \
+        --title="${title}" \
+        --force-window=yes \
+        --keep-open=yes \
+        --osd-level=1 \
+        --save-position-on-quit \
+        --cache=yes \
+        --cache-secs=300 \
+        "http://localhost:${port}"
     local exit_code=$?
 
+    # Clean up
     kill "$peerflix_pid" 2>/dev/null
     pkill -f peerflix 2>/dev/null
+    rm -f "/tmp/peerflix.$$.log"
+
     return $exit_code
 }
 
@@ -240,11 +222,12 @@ play_torrent() {
 try_all_streams() {
     local streams_json="$1" title="$2"
 
-    # Check for direct URL first (unlikely, but keep for completeness)
+    # Check for direct URL first (unlikely, but keep)
     local direct_url
     direct_url=$(echo "$streams_json" | jq -r \
         '.streams[] | select(.url != null) | .url' 2>/dev/null | head -1)
     if [[ -n "$direct_url" ]]; then
+        msg_info "Direct URL found, playing..."
         mpv --title="$title" "$direct_url"
         return $?
     fi
@@ -450,7 +433,6 @@ ${c_bld}EXAMPLES${c_rst}
   seri-cli "Breaking Bad"
   seri-cli "Interstellar"
   seri-cli "The Dark Knight"
-  seri-cli "Fight Club"
 
 ${c_bld}DEPS${c_rst}
   Required: curl mpv fzf jq python3 nodejs npm
