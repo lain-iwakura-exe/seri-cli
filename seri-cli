@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================
-#  seri-cli v4.5.2 — stream series & films on Linux via MPV
+#  seri-cli v4.5.3 — stream series & films on Linux via MPV
 #  NO TORRENTS — Direct streaming from web sources
 #  License: GPL-3.0
 # ============================================================
 
-VERSION="4.5.2"
+VERSION="4.5.3"
 QUALITY="${QUALITY:-best}"
 HISTORY_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/seri-cli/history"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/seri-cli/config"
@@ -46,8 +46,8 @@ dep_check() {
         exit 1
     fi
     if ! command -v yt-dlp &>/dev/null; then
-        msg_warn "yt-dlp not found (strongly recommended)"
-        msg_info "Install it: sudo apt install yt-dlp"
+        msg_warn "yt-dlp not found - installing..."
+        sudo apt install -y yt-dlp || pip install yt-dlp
     fi
 }
 
@@ -105,20 +105,8 @@ parse_results() {
 }
 
 # ── DIRECT STREAMING SCRAPERS ─────────────────────────────────
-get_vidsrc_stream() {
-    local tmdb_id="$1"
-    local type="$2"
-    local season="$3"
-    local episode="$4"
-    
-    if [[ "$type" == "movie" ]]; then
-        echo "https://vidsrc.to/embed/movie/${tmdb_id}"
-    else
-        echo "https://vidsrc.to/embed/tv/${tmdb_id}/${season}/${episode}"
-    fi
-}
-
-get_2embed_stream() {
+# Use 2embed.cc - works with yt-dlp
+get_stream_url() {
     local tmdb_id="$1"
     local type="$2"
     local season="$3"
@@ -131,94 +119,28 @@ get_2embed_stream() {
     fi
 }
 
-get_vidplay_stream() {
-    local tmdb_id="$1"
-    local type="$2"
-    local season="$3"
-    local episode="$4"
-    
-    if [[ "$type" == "movie" ]]; then
-        echo "https://vidplay.online/movie/${tmdb_id}"
-    else
-        echo "https://vidplay.online/tv/${tmdb_id}/${season}/${episode}"
-    fi
-}
-
-# Fixed: Returns ONLY the URL, no extra text
-get_stream_url() {
-    local tmdb_id="$1"
-    local type="$2"
-    local season="$3"
-    local episode="$4"
-    
-    local sources=(
-        "vidsrc:$(get_vidsrc_stream "$tmdb_id" "$type" "$season" "$episode")"
-        "2embed:$(get_2embed_stream "$tmdb_id" "$type" "$season" "$episode")"
-        "vidplay:$(get_vidplay_stream "$tmdb_id" "$type" "$season" "$episode")"
-    )
-    
-    for source in "${sources[@]}"; do
-        local name="${source%%:*}"
-        local url="${source#*:}"
-        
-        msg_info "Trying ${name}..." >&2
-        
-        # Check if URL is accessible
-        if curl -sf --max-time 3 -o /dev/null -w "%{http_code}" "$url" 2>/dev/null | grep -q "200"; then
-            msg_ok "Found stream on ${name}" >&2
-            echo "$url"
-            return 0
-        fi
-    done
-    
-    msg_warn "All sources failed" >&2
-    return 1
-}
-
 # ── Play ──────────────────────────────────────────────────────
 play_direct() {
     local url="$1" title="$2"
     
-    # Clean URL - remove any extra text, keep only the URL
-    url=$(echo "$url" | grep -o 'https://[^ ]*' | head -1)
-    
-    if [[ -z "$url" ]]; then
-        msg_err "Invalid URL"
-        return 1
-    fi
-    
     msg_play "Playing: ${title}"
+    msg_info "Extracting video stream..."
     msg_info "Press 'q' to quit, 'space' to pause"
     
-    # Use yt-dlp to extract the actual video stream
-    if command -v yt-dlp &>/dev/null; then
-        mpv \
-            --ytdl \
-            --title="${title}" \
-            --force-window=yes \
-            --keep-open=yes \
-            --osd-level=1 \
-            --save-position-on-quit \
-            --cache=yes \
-            --cache-secs=300 \
-            --force-seekable=yes \
-            --hls-bitrate=max \
-            "$url"
-    else
-        msg_warn "yt-dlp not found - trying direct"
-        mpv \
-            --title="${title}" \
-            --force-window=yes \
-            --keep-open=yes \
-            --osd-level=1 \
-            --save-position-on-quit \
-            --cache=yes \
-            --cache-secs=300 \
-            --force-seekable=yes \
-            --user-agent="Mozilla/5.0" \
-            --referrer="https://vidsrc.to/" \
-            "$url"
-    fi
+    # Use yt-dlp with mpv for best results
+    mpv \
+        --ytdl \
+        --ytdl-format="bestvideo[height<=?1080]+bestaudio/best" \
+        --title="${title}" \
+        --force-window=yes \
+        --keep-open=yes \
+        --osd-level=1 \
+        --save-position-on-quit \
+        --cache=yes \
+        --cache-secs=300 \
+        --user-agent="Mozilla/5.0" \
+        --referrer="https://2embed.cc/" \
+        "$url"
     
     return $?
 }
@@ -248,8 +170,6 @@ search_and_play() {
     media_id=$(echo "$row"   | cut -f2)
     title=$(echo "$row"      | cut -f3)
 
-    msg_info "Getting stream for: ${title}"
-
     if [[ "$media_type" == "movie" ]]; then
         local stream_url
         stream_url=$(get_stream_url "$media_id" "movie" "" "")
@@ -258,7 +178,7 @@ search_and_play() {
             history_add "movie|${media_id}|${title}"
             play_direct "$stream_url" "$title"
         else
-            msg_err "Could not find any working stream for: ${title}"
+            msg_err "Could not find stream for: ${title}"
         fi
 
     else
@@ -275,7 +195,7 @@ search_and_play() {
             season=$(echo "$sep" | cut -d'|' -f1)
             ep=$(echo "$sep"     | cut -d'|' -f2)
 
-            msg_info "Getting stream for: ${title} S${season}E${ep}"
+            msg_info "Streaming: ${title} S${season}E${ep}"
             stream_url=$(get_stream_url "$media_id" "tv" "$season" "$ep")
             
             if [[ -n "$stream_url" ]]; then
@@ -292,7 +212,7 @@ search_and_play() {
                     play_direct "$stream_url" "${title} S${season}E${ep}" ;;
                 "Next episode")
                     ep=$((ep + 1))
-                    msg_info "Getting next episode..."
+                    msg_info "Streaming next episode..."
                     stream_url=$(get_stream_url "$media_id" "tv" "$season" "$ep")
                     play_direct "$stream_url" "${title} S${season}E${ep}" ;;
                 "Different episode") continue ;;
@@ -389,14 +309,12 @@ ${c_bld}OPTIONS${c_rst}
 ${c_bld}EXAMPLES${c_rst}
   seri-cli "Breaking Bad"
   seri-cli "Interstellar"
-  seri-cli "The Dark Knight"
 
 ${c_bld}DEPS${c_rst}
-  Required: curl mpv fzf jq
-  Recommended: yt-dlp (sudo apt install yt-dlp)
+  Required: curl mpv fzf jq yt-dlp
 
-${c_bld}STREAM SOURCES${c_rst}
-  vidsrc.to, 2embed.cc, vidplay.online
+${c_bld}STREAM SOURCE${c_rst}
+  2embed.cc - works with yt-dlp
   No torrents, no peerflix, no npm!
 EOF
 }
