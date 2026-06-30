@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================
-#  seri-cli v5.0.0 — stream series & films on Linux via MPV
+#  seri-cli v4.5.0 — stream series & films on Linux via MPV
 #  NO TORRENTS — Direct streaming from web sources
 #  License: GPL-3.0
 # ============================================================
 
-VERSION="5.0.0"
+VERSION="4.5.0"
 QUALITY="${QUALITY:-best}"
 HISTORY_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/seri-cli/history"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/seri-cli/config"
@@ -53,7 +53,6 @@ init_dirs() {
 }
 
 urlencode() {
-    # Pure bash URL encoding (no python dependency)
     local string="$1"
     local strlen=${#string}
     local encoded=""
@@ -102,7 +101,6 @@ parse_results() {
 }
 
 # ── DIRECT STREAMING SCRAPERS ─────────────────────────────────
-# Source 1: Vidsrc.to (best quality, fast)
 get_vidsrc_stream() {
     local tmdb_id="$1"
     local type="$2"
@@ -116,7 +114,6 @@ get_vidsrc_stream() {
     fi
 }
 
-# Source 2: 2Embed.cc (good alternative)
 get_2embed_stream() {
     local tmdb_id="$1"
     local type="$2"
@@ -130,7 +127,6 @@ get_2embed_stream() {
     fi
 }
 
-# Source 3: Vidplay (backup)
 get_vidplay_stream() {
     local tmdb_id="$1"
     local type="$2"
@@ -144,7 +140,6 @@ get_vidplay_stream() {
     fi
 }
 
-# Try all sources until one works
 get_stream_url() {
     local tmdb_id="$1"
     local type="$2"
@@ -152,7 +147,6 @@ get_stream_url() {
     local episode="$4"
     local title="$5"
     
-    # Array of sources to try
     local sources=(
         "vidsrc:$(get_vidsrc_stream "$tmdb_id" "$type" "$season" "$episode")"
         "2embed:$(get_2embed_stream "$tmdb_id" "$type" "$season" "$episode")"
@@ -165,14 +159,12 @@ get_stream_url() {
         
         msg_info "Trying ${name}..."
         
-        # Quick check if source is accessible (timeout 3s)
         if curl -sf --max-time 3 -o /dev/null -w "%{http_code}" "$url" | grep -q "200"; then
             msg_ok "Found stream on ${name}"
             echo "$url"
             return 0
         fi
         
-        # If we get a 403/404, try the next source
         local status
         status=$(curl -sf --max-time 3 -o /dev/null -w "%{http_code}" "$url" 2>/dev/null)
         if [[ "$status" == "403" ]] || [[ "$status" == "404" ]]; then
@@ -181,10 +173,8 @@ get_stream_url() {
         fi
     done
     
-    # If all sources fail, try direct MPV with yt-dlp fallback
     msg_warn "All sources failed, trying yt-dlp fallback..."
     if command -v yt-dlp &>/dev/null; then
-        # Try to extract direct stream using yt-dlp
         local fallback_url
         fallback_url=$(yt-dlp -g "https://vidsrc.to/embed/${type}/${tmdb_id}" 2>/dev/null | head -1)
         if [[ -n "$fallback_url" ]]; then
@@ -204,7 +194,6 @@ play_direct() {
     msg_info "Stream URL: ${url}"
     msg_info "Press 'q' to quit, 'space' to pause"
     
-    # Use mpv with optimal settings for direct streaming
     mpv \
         --title="${title}" \
         --force-window=yes \
@@ -214,7 +203,6 @@ play_direct() {
         --cache=yes \
         --cache-secs=300 \
         --demuxer-max-bytes=10M \
-        --demuxer-read-ahead-secs=10 \
         --force-seekable=yes \
         --hls-bitrate=max \
         --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
@@ -253,7 +241,6 @@ search_and_play() {
     msg_info "Getting stream for: ${title}"
 
     if [[ "$media_type" == "movie" ]]; then
-        # Play movie directly
         local stream_url
         stream_url=$(get_stream_url "$media_id" "movie" "" "" "$title")
         
@@ -266,7 +253,6 @@ search_and_play() {
         fi
 
     else
-        # TV Series - season/episode picker
         local details total_seasons
         details=$(tmdb_details "$media_id" "tv")
         total_seasons=$(echo "$details" | jq -r '.number_of_seasons // 1')
