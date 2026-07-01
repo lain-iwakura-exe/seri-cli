@@ -4,7 +4,7 @@
 #  License: GPL-3.0
 # ============================================================
 
-VERSION="5.1.0"
+VERSION="5.2.0"
 QUALITY="${QUALITY:-best}"
 HISTORY_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/seri-cli/history"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/seri-cli/config"
@@ -148,88 +148,96 @@ build_magnet() {
     echo "$magnet"
 }
 
-# ── Play via peerflix + MPV ───────────────────────────────────
+# ── Download torrent then stream from file in MPV ─────────────
 play_torrent() {
     local hash="$1" file_idx="$2" title="$3"
     local magnet
     magnet=$(build_magnet "$hash")
 
+    local dl_dir="/tmp/seri-stream/${hash}"
+    mkdir -p "$dl_dir"
+
     msg_play "Playing: ${title}"
     msg_info "Hash: ${hash:0:12}..."
 
-    # Kill any existing peerflix instance
+    # Kill any existing peerflix
     pkill -f peerflix 2>/dev/null
     sleep 1
 
-    # Start peerflix serving on localhost:8888
-    msg_info "Starting peerflix HTTP server..."
+    # Start peerflix downloading to /tmp — it serves HTTP AND saves to disk
+    msg_info "Downloading torrent to /tmp/seri-stream/..."
     if [[ "$file_idx" == "0" ]]; then
-        peerflix "$magnet" --port 8888 > /tmp/peerflix.log 2>&1 &
+        peerflix "$magnet" --port 8888 --path "$dl_dir" > /tmp/peerflix.log 2>&1 &
     else
-        peerflix "$magnet" --port 8888 --index "$file_idx" > /tmp/peerflix.log 2>&1 &
+        peerflix "$magnet" --port 8888 --path "$dl_dir" --index "$file_idx" > /tmp/peerflix.log 2>&1 &
     fi
     local peerflix_pid=$!
     disown "$peerflix_pid" 2>/dev/null || true
 
-    # Wait for peerflix HTTP server to be ready
-    msg_info "Waiting for stream to buffer..."
+    # Wait for a real video file to appear in /tmp and grow to 10MB
+    msg_info "Waiting for download to start..."
     local tries=0
-    local server_ready=0
+    local video_file=""
 
-    while [[ $tries -lt 60 ]]; do
+    while [[ $tries -lt 120 ]]; do
         sleep 1
         tries=$((tries + 1))
 
-        # Check if peerflix server is up
-        if curl -sf --max-time 1 "http://localhost:8888" -o /dev/null 2>/dev/null; then
-            server_ready=1
-            break
+        # Find video file written to disk by peerflix
+        video_file=$(find "$dl_dir" -type f             \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" \)             2>/dev/null | head -1)
+
+        if [[ -n "$video_file" ]]; then
+            local size
+            size=$(stat -c%s "$video_file" 2>/dev/null || echo 0)
+            local mb=$((size / 1048576))
+            printf "${c_blu}[~]${c_rst} Buffering: %dMB downloaded...   " "$mb"
+
+            # Open MPV once we have at least 50MB buffered
+            if [[ "$size" -gt 52428800 ]]; then
+                printf "
+"
+                msg_ok "Enough buffered! Opening MPV..."
+                break
+            fi
         fi
 
-        # Check for dead torrent — 0/0 peers in log after 15s
-        if [[ $tries -ge 15 ]]; then
-            local log_content
-            log_content=$(cat /tmp/peerflix.log 2>/dev/null)
-            if echo "$log_content" | grep -q "0/0 peers"; then
-                msg_warn "No peers — dead torrent, skipping..."
+        # After 30s check for 0 peers — dead torrent
+        if [[ $tries -ge 30 ]]; then
+            if grep -q "0/0 peers" /tmp/peerflix.log 2>/dev/null; then
+                printf "
+"
+                msg_warn "No peers found — WE is blocking BitTorrent. Use a VPN."
                 kill "$peerflix_pid" 2>/dev/null
                 pkill -f peerflix 2>/dev/null
                 return 1
             fi
         fi
 
-        # peerflix died unexpectedly
+        # peerflix died
         if ! kill -0 "$peerflix_pid" 2>/dev/null; then
-            msg_warn "peerflix exited unexpectedly, skipping..."
+            printf "
+"
+            msg_warn "peerflix exited — skipping this stream..."
             return 1
         fi
     done
+    printf "
+"
 
-    if [[ $server_ready -eq 0 ]]; then
-        msg_warn "Stream server timed out, skipping..."
+    if [[ -z "$video_file" ]] || [[ ! -f "$video_file" ]]; then
+        msg_warn "No video file found after 120s — skipping..."
         kill "$peerflix_pid" 2>/dev/null
         pkill -f peerflix 2>/dev/null
         return 1
     fi
 
-    msg_ok "Stream ready! Opening MPV..."
-
-    # Play the HTTP stream in MPV
-    mpv \
-        --title="${title}" \
-        --force-window=yes \
-        --keep-open=yes \
-        --osd-level=1 \
-        --save-position-on-quit \
-        --cache=yes \
-        --demuxer-readahead-secs=30 \
-        "http://localhost:8888"
+    # Stream from the downloaded file — peerflix keeps downloading in background
+    msg_info "Streaming from: $(basename "$video_file")"
+    mpv         --title="${title}"         --force-window=yes         --keep-open=yes         --osd-level=1         --save-position-on-quit         --cache=yes         --demuxer-readahead-secs=60         "$video_file"
     local exit_code=$?
 
-    # Clean up peerflix after MPV closes
     kill "$peerflix_pid" 2>/dev/null
     pkill -f peerflix 2>/dev/null
-
     return $exit_code
 }
 
