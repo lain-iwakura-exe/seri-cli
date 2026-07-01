@@ -184,33 +184,55 @@ download_and_play() {
         "$magnet" > "${job_dir}/aria2.log" 2>&1 &
     local aria_pid=$!
 
-    # Wait for the actual video file to appear and start growing
-    msg_info "Waiting for download to start (checking for peers)..."
+    # Wait for the actual video file to appear and grow
+    msg_info "Waiting for peers and download to start..."
     local tries=0
     local video_file=""
-    local max_wait=20
+    local max_wait=30
+    local min_size=20000000  # 20MB before opening MPV
 
     while [[ $tries -lt $max_wait ]]; do
         sleep 1
         tries=$((tries + 1))
 
-        video_file=$(find "$job_dir" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" \) 2>/dev/null | head -1)
+        # Find video file — explicitly exclude .aria2 control files
+        video_file=$(find "$job_dir" -type f             \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" \)             ! -iname "*.aria2" 2>/dev/null | head -1)
 
         if [[ -n "$video_file" ]] && [[ -f "$video_file" ]]; then
             local size
             size=$(stat -c%s "$video_file" 2>/dev/null || echo 0)
-            if [[ "$size" -gt 5000000 ]]; then
-                msg_ok "Download started, enough buffered to begin playback!"
+            if [[ "$size" -gt "$min_size" ]]; then
+                msg_ok "Buffered ${size} bytes — opening MPV!"
                 break
+            else
+                local mb=$((size / 1000000))
+                printf "${c_blu}[~]${c_rst} Buffering: ${mb}MB / 20MB needed...   "
             fi
         fi
 
-        # Detect dead torrent — no peers after reasonable time
-        if [[ $tries -ge 10 ]] && ! kill -0 "$aria_pid" 2>/dev/null; then
-            msg_warn "aria2c exited early, likely no peers."
+        # Check aria2c log for peer count after 10s
+        if [[ $tries -ge 10 ]]; then
+            local peer_info
+            peer_info=$(grep -oP "\(\K[0-9]+" "${job_dir}/aria2.log" 2>/dev/null | tail -1)
+            if [[ -n "$peer_info" ]] && [[ "$peer_info" -eq 0 ]]; then
+                printf "
+"
+                msg_warn "No peers connecting — dead torrent, skipping..."
+                kill "$aria_pid" 2>/dev/null
+                return 1
+            fi
+        fi
+
+        # aria2c exited without producing a file
+        if ! kill -0 "$aria_pid" 2>/dev/null && [[ -z "$video_file" ]]; then
+            printf "
+"
+            msg_warn "aria2c exited — likely no peers on this network."
             return 1
         fi
     done
+    printf "
+"
 
     if [[ -z "$video_file" ]] || [[ ! -f "$video_file" ]]; then
         msg_warn "No peers found within ${max_wait}s, skipping this stream..."

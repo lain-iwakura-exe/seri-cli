@@ -1,10 +1,10 @@
 # seri-cli
 
 ```
-  ___  ___  _ __  __     __ ___  __    __
- / __|/ _ \| '__| \ \   / // _ \ \ \  / /
- \__ \  __/| |     \ \ / /| (_) | \ \/ /
- |___/\___||_|      \_/  \___/   \__/
+  ___  ___ _ __ (_)      ___| (_)
+ / __|/ _ \ '__|| |____ / __| | |
+ \__ \  __/ |   | |____| (__| | |
+ |___/\___|_|   |_|     \___|_|_|
 ```
 
 > **Stream movies & TV series from your terminal on Linux — inspired by ani-cli**  
@@ -49,18 +49,12 @@ sudo zypper install curl mpv fzf jq python3 aria2
 
 | Package | Required | Purpose |
 |---------|----------|---------|
-| `curl` | ✅ Yes | HTTP requests |
-| `mpv` | ✅ Yes | Video playback |
-| `fzf` | ✅ Yes | Interactive menus |
-| `jq` | ✅ Yes | JSON parsing |
-| `python3` | ✅ Yes | URL encoding |
-| `aria2c` | ✅ Yes | BitTorrent download engine |
-
-> ❌ Stremio — NOT required  
-> ❌ peerflix — NOT required  
-> ❌ webtorrent — NOT required  
-> ❌ torrentflix — NOT required  
-> ❌ Any browser — NOT required
+| `curl` | Yes | HTTP requests |
+| `mpv` | Yes | Video playback |
+| `fzf` | Yes | Interactive menus |
+| `jq` | Yes | JSON parsing |
+| `python3` | Yes | URL encoding |
+| `aria2c` | Yes | BitTorrent download engine |
 
 ---
 
@@ -104,39 +98,37 @@ seri-cli "House of the Dragon"
 
 ## How it works
 
-1. Search TMDB for your title (movies & shows 1980-2026)
+1. Search TMDB for your title (movies and shows 1980-2026)
 2. Get the IMDB ID automatically
-3. Query **Torrentio** for stream sources
+3. Query Torrentio for stream sources
 4. Pick best quality (1080p preferred)
-5. **aria2c** downloads the torrent to disk
-6. Once enough has buffered, **MPV** opens automatically and plays the file
+5. aria2c downloads the torrent sequentially to disk
+6. Once 20MB is buffered, MPV opens automatically and plays the file
 7. Download continues in the background while you watch
 
 ---
 
-## A note on network restrictions
+## Note on ISP restrictions
 
-Some ISPs (notably in Egypt and other regions) throttle or block BitTorrent
-protocol traffic, even though regular web traffic works fine. If streams
-consistently show 0 peers regardless of title popularity, this is likely
-the cause. A VPN typically resolves this.
+Some ISPs throttle or block BitTorrent protocol traffic. If streams
+consistently show 0 peers regardless of title, this is likely the cause.
+A VPN resolves this.
 
 ---
 
 ## Troubleshooting
 
 **MPV does not open**
-→ Make sure aria2c is installed: `sudo apt install aria2` (or pacman/dnf/zypper equivalent)  
-→ Wait up to 20 seconds for the download to gain enough buffer
+Install aria2: `sudo apt install aria2` (or pacman/dnf/zypper)
 
-**No streams found / 0 peers on every title**
-→ This usually means your ISP is blocking BitTorrent traffic — try a VPN
+**0 peers on every title**
+Your ISP is blocking BitTorrent traffic. Use a VPN.
 
 **fzf menu is empty**
-→ Check your internet connection
+Check your internet connection.
 
 **Permission denied**
-→ `sudo chmod +x /usr/local/bin/seri-cli`
+`sudo chmod +x /usr/local/bin/seri-cli`
 
 ---
 
@@ -144,8 +136,8 @@ the cause. A VPN typically resolves this.
 
 `~/.config/seri-cli/config`
 ```bash
-TMDB_KEY=your_key_here       # optional: your own TMDB API key
-QUALITY=best                 # best | 1080p | 720p | 480p | 360p
+TMDB_KEY=your_key_here
+QUALITY=best
 DOWNLOAD_DIR=/tmp/seri-cli-downloads
 ```
 
@@ -153,7 +145,7 @@ DOWNLOAD_DIR=/tmp/seri-cli-downloads
 
 ## License
 
-GPL-3.0 — same as ani-cli.
+GPL-3.0
 
 ---
 
