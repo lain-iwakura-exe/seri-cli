@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 # ============================================================
-#  seri-cli v5.0.0 — stream series & films on Linux via MPV
+#  seri-cli v5.1.0 — stream series & films on Linux via MPV
 #  License: GPL-3.0
 # ============================================================
 
-VERSION="5.0.0"
+VERSION="5.1.0"
 QUALITY="${QUALITY:-best}"
 HISTORY_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/seri-cli/history"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/seri-cli/config"
 TMDB_KEY="${TMDB_KEY:-037e92c800c648af4e68b0661944c690}"
 TMDB_BASE="https://api.themoviedb.org/3"
-DOWNLOAD_DIR="${DOWNLOAD_DIR:-/tmp/seri-cli-downloads}"
 
 c_red='\033[0;31m'; c_grn='\033[0;32m'; c_ylw='\033[1;33m'
 c_blu='\033[0;34m'; c_cyn='\033[0;36m'; c_mag='\033[0;35m'
@@ -24,26 +23,16 @@ msg_play() { printf "${c_grn}[>]${c_rst} ${c_bld}%s${c_rst}\n" "$*"; }
 
 banner() {
     printf "${c_grn}${c_bld}"
-    cat << 'EOF'
-  ___  ___  _ __  __     __ ___  __    __
- / __|/ _ \\| '__| \\ \\   / // _ \\ \\ \\  / /
- \\__ \\  __/| |     \\ \\ / /| (_) | \\ \\/ /
- |___/\\___||_|      \\_/  \\___/   \\__/
-EOF
-    printf "${c_rst}\n${c_cyn}  stream movies & tv series from your terminal${c_rst}\n\n"
-}
-
-print_menu() {
-    printf "${c_mag}  > ${c_rst}search\n"
-    printf "${c_mag}  > ${c_rst}history\n"
-    printf "${c_mag}  > ${c_rst}watch\n"
-    printf "${c_mag}  > ${c_rst}settings\n"
-    printf "${c_mag}  > ${c_rst}exit\n\n"
+    printf "  ___  ___ _ __ (_)      ___| (_)\n"
+    printf " / __|/ _ \\ '__|| |____ / __| | |\n"
+    printf " \\__ \\  __/ |   | |____| (__| | |\n"
+    printf " |___/\\___|_|   |_|     \\___|_|_|\n"
+    printf "${c_rst}\n${c_cyn}  stream movies & tv series from your terminal  v${VERSION}${c_rst}\n\n"
 }
 
 dep_check() {
     local missing=()
-    for cmd in curl mpv fzf jq python3 aria2c; do
+    for cmd in curl mpv fzf jq python3; do
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
     if [[ ${#missing[@]} -gt 0 ]]; then
@@ -53,10 +42,15 @@ dep_check() {
         command -v dnf    &>/dev/null && echo "  sudo dnf install ${missing[*]}"
         exit 1
     fi
+    if ! command -v peerflix &>/dev/null; then
+        msg_err "Missing peerflix. Install it:"
+        echo "  sudo npm install -g peerflix"
+        exit 1
+    fi
 }
 
 init_dirs() {
-    mkdir -p "$(dirname "$HISTORY_FILE")" "$(dirname "$CONFIG_FILE")" "$DOWNLOAD_DIR"
+    mkdir -p "$(dirname "$HISTORY_FILE")" "$(dirname "$CONFIG_FILE")"
     [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 }
 
@@ -118,7 +112,6 @@ get_streams() {
         "https://torrentio.strem.fun/stream/${stype}/${sid}.json" 2>/dev/null
 }
 
-# Returns ordered list of hash:fileidx:title — 1080p first, then 720p, then rest
 get_all_hashes() {
     local json="$1"
     local result
@@ -155,126 +148,102 @@ build_magnet() {
     echo "$magnet"
 }
 
-# ── Download torrent file then stream from disk ────────────────
-# Uses aria2c to download via BitTorrent, then plays the file in MPV
-# once enough of it has downloaded (sequential download mode)
-download_and_play() {
+# ── Play via peerflix + MPV ───────────────────────────────────
+play_torrent() {
     local hash="$1" file_idx="$2" title="$3"
     local magnet
     magnet=$(build_magnet "$hash")
 
-    local job_dir="${DOWNLOAD_DIR}/${hash}"
-    mkdir -p "$job_dir"
-
     msg_play "Playing: ${title}"
     msg_info "Hash: ${hash:0:12}..."
-    msg_info "Downloading via aria2c (sequential mode)..."
 
-    # Start aria2c in background — sequential piece download for streaming
-    aria2c \
-        --seed-time=0 \
-        --bt-enable-lpd=true \
-        --enable-dht=true \
-        --bt-max-peers=80 \
-        --bt-request-peer-speed-limit=50M \
-        --file-allocation=none \
-        --dir="$job_dir" \
-        --summary-interval=0 \
-        --console-log-level=warn \
-        "$magnet" > "${job_dir}/aria2.log" 2>&1 &
-    local aria_pid=$!
+    # Kill any existing peerflix instance
+    pkill -f peerflix 2>/dev/null
+    sleep 1
 
-    # Wait for the actual video file to appear and grow
-    msg_info "Waiting for peers and download to start..."
+    # Start peerflix serving on localhost:8888
+    msg_info "Starting peerflix HTTP server..."
+    if [[ "$file_idx" == "0" ]]; then
+        peerflix "$magnet" --port 8888 > /tmp/peerflix.log 2>&1 &
+    else
+        peerflix "$magnet" --port 8888 --index "$file_idx" > /tmp/peerflix.log 2>&1 &
+    fi
+    local peerflix_pid=$!
+    disown "$peerflix_pid" 2>/dev/null || true
+
+    # Wait for peerflix HTTP server to be ready
+    msg_info "Waiting for stream to buffer..."
     local tries=0
-    local video_file=""
-    local max_wait=30
-    local min_size=20000000  # 20MB before opening MPV
+    local server_ready=0
 
-    while [[ $tries -lt $max_wait ]]; do
+    while [[ $tries -lt 60 ]]; do
         sleep 1
         tries=$((tries + 1))
 
-        # Find video file — explicitly exclude .aria2 control files
-        video_file=$(find "$job_dir" -type f             \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" \)             ! -iname "*.aria2" 2>/dev/null | head -1)
-
-        if [[ -n "$video_file" ]] && [[ -f "$video_file" ]]; then
-            local size
-            size=$(stat -c%s "$video_file" 2>/dev/null || echo 0)
-            if [[ "$size" -gt "$min_size" ]]; then
-                msg_ok "Buffered ${size} bytes — opening MPV!"
-                break
-            else
-                local mb=$((size / 1000000))
-                printf "${c_blu}[~]${c_rst} Buffering: ${mb}MB / 20MB needed...   "
-            fi
+        # Check if peerflix server is up
+        if curl -sf --max-time 1 "http://localhost:8888" -o /dev/null 2>/dev/null; then
+            server_ready=1
+            break
         fi
 
-        # Check aria2c log for peer count after 10s
-        if [[ $tries -ge 10 ]]; then
-            local peer_info
-            peer_info=$(grep -oP "\(\K[0-9]+" "${job_dir}/aria2.log" 2>/dev/null | tail -1)
-            if [[ -n "$peer_info" ]] && [[ "$peer_info" -eq 0 ]]; then
-                printf "
-"
-                msg_warn "No peers connecting — dead torrent, skipping..."
-                kill "$aria_pid" 2>/dev/null
+        # Check for dead torrent — 0/0 peers in log after 15s
+        if [[ $tries -ge 15 ]]; then
+            local log_content
+            log_content=$(cat /tmp/peerflix.log 2>/dev/null)
+            if echo "$log_content" | grep -q "0/0 peers"; then
+                msg_warn "No peers — dead torrent, skipping..."
+                kill "$peerflix_pid" 2>/dev/null
+                pkill -f peerflix 2>/dev/null
                 return 1
             fi
         fi
 
-        # aria2c exited without producing a file
-        if ! kill -0 "$aria_pid" 2>/dev/null && [[ -z "$video_file" ]]; then
-            printf "
-"
-            msg_warn "aria2c exited — likely no peers on this network."
+        # peerflix died unexpectedly
+        if ! kill -0 "$peerflix_pid" 2>/dev/null; then
+            msg_warn "peerflix exited unexpectedly, skipping..."
             return 1
         fi
     done
-    printf "
-"
 
-    if [[ -z "$video_file" ]] || [[ ! -f "$video_file" ]]; then
-        msg_warn "No peers found within ${max_wait}s, skipping this stream..."
-        kill "$aria_pid" 2>/dev/null
+    if [[ $server_ready -eq 0 ]]; then
+        msg_warn "Stream server timed out, skipping..."
+        kill "$peerflix_pid" 2>/dev/null
+        pkill -f peerflix 2>/dev/null
         return 1
     fi
 
-    msg_info "Opening MPV (file will continue downloading in background)..."
+    msg_ok "Stream ready! Opening MPV..."
+
+    # Play the HTTP stream in MPV
     mpv \
         --title="${title}" \
         --force-window=yes \
         --keep-open=yes \
         --osd-level=1 \
         --save-position-on-quit \
-        --hr-seek=yes \
         --cache=yes \
         --demuxer-readahead-secs=30 \
-        "$video_file"
+        "http://localhost:8888"
     local exit_code=$?
 
-    # Stop the download after MPV closes
-    kill "$aria_pid" 2>/dev/null
+    # Clean up peerflix after MPV closes
+    kill "$peerflix_pid" 2>/dev/null
+    pkill -f peerflix 2>/dev/null
 
     return $exit_code
 }
 
-# Try streams one by one until one downloads successfully
+# Try all streams until one works
 try_all_streams() {
     local streams_json="$1" title="$2"
 
+    # Try direct URL first
     local direct_url
     direct_url=$(echo "$streams_json" | jq -r \
         '.streams[] | select(.url != null) | .url' 2>/dev/null | head -1)
     if [[ -n "$direct_url" ]]; then
-        mpv \
-            --title="${title}" \
-            --force-window=yes \
-            --keep-open=yes \
-            --osd-level=1 \
-            --save-position-on-quit \
-            --user-agent="Mozilla/5.0" \
-            "$direct_url"
+        mpv --title="${title}" --force-window=yes --keep-open=yes \
+            --osd-level=1 --save-position-on-quit "$direct_url"
         return $?
     fi
 
@@ -299,17 +268,16 @@ try_all_streams() {
         file_idx=$(echo "$entry" | cut -d: -f2)
 
         msg_info "Stream ${count}/${total}"
-        download_and_play "$hash" "${file_idx:-0}" "$title"
-        local exit_code=$?
+        play_torrent "$hash" "${file_idx:-0}" "$title"
 
-        if [[ $exit_code -eq 0 ]]; then
+        if [[ $? -eq 0 ]]; then
             return 0
         fi
 
         msg_warn "Stream ${count} failed, trying next..."
     done <<< "$all_hashes"
 
-    msg_err "All streams failed."
+    msg_err "All streams failed. If this keeps happening, your ISP may be blocking BitTorrent — try a VPN."
     return 1
 }
 
@@ -373,7 +341,7 @@ select_quality() {
         --color="fg:#cdd6f4,bg:#1e1e2e,hl:#a6e3a1,prompt:#a6e3a1,pointer:#cba6f7"
 }
 
-# ── Main ──────────────────────────────────────────────────────
+# ── Main search & play ────────────────────────────────────────
 search_and_play() {
     local query="$1"
     msg_info "Searching: ${query}"
@@ -488,14 +456,15 @@ ${c_bld}EXAMPLES${c_rst}
   seri-cli "The Dark Knight"
 
 ${c_bld}DEPS${c_rst}
-  Required : curl mpv fzf jq python3 aria2c
+  Required : curl mpv fzf jq python3
+  Streaming: peerflix (sudo npm install -g peerflix)
 EOF
 }
 
 main() {
     dep_check
     init_dirs
-    [[ $# -eq 0 ]] && { banner; print_menu; usage; exit 0; }
+    [[ $# -eq 0 ]] && { banner; usage; exit 0; }
 
     local query=""
     while [[ $# -gt 0 ]]; do

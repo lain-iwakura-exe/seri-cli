@@ -8,20 +8,19 @@
 ```
 
 > **Stream movies & TV series from your terminal on Linux — inspired by ani-cli**  
-> Downloads via aria2c (BitTorrent) and plays directly in MPV.
+> Uses Torrentio + peerflix + MPV. No browser needed.
 
 ---
 
 ## Features
 
-- 🔍 Search any movie or show from **1980 → 2026** via TMDB
-- 📺 TV Shows — season + episode picker with episode names
-- 🎬 Movies — instant stream
-- 🎚️ Quality picker — 1080p preferred automatically
-- 🔁 Replay / Next episode / Different episode menu
-- 📝 Watch history
-- ⚡ Downloads via Torrentio + aria2c, plays in MPV automatically
-- 🐧 Works on Arch, Debian, Fedora, openSUSE and any Linux distro
+- Search any movie or show from 1980 to 2026 via TMDB
+- TV Shows with season and episode picker
+- Movies instant stream
+- Quality picker — 1080p preferred automatically
+- Replay, Next episode, Different episode menu after playback
+- Watch history
+- Works on Arch, Debian, Fedora, openSUSE and any Linux distro
 
 ---
 
@@ -29,38 +28,43 @@
 
 ### Arch / CachyOS / EndeavourOS / Manjaro
 ```bash
-sudo pacman -S curl mpv fzf jq python aria2
+sudo pacman -S curl mpv fzf jq python nodejs npm
+sudo npm install -g peerflix
 ```
 
 ### Debian / Ubuntu / Linux Mint
 ```bash
-sudo apt install curl mpv fzf jq python3 aria2
+sudo apt install curl mpv fzf jq python3 nodejs npm
+sudo npm install -g peerflix
 ```
 
 ### Fedora
 ```bash
-sudo dnf install curl mpv fzf jq python3 aria2
+sudo dnf install curl mpv fzf jq python3 nodejs npm
+sudo npm install -g peerflix
 ```
 
 ### openSUSE
 ```bash
-sudo zypper install curl mpv fzf jq python3 aria2
+sudo zypper install curl mpv fzf jq python3 nodejs npm
+sudo npm install -g peerflix
 ```
 
 | Package | Required | Purpose |
 |---------|----------|---------|
-| `curl` | Yes | HTTP requests |
-| `mpv` | Yes | Video playback |
-| `fzf` | Yes | Interactive menus |
-| `jq` | Yes | JSON parsing |
-| `python3` | Yes | URL encoding |
-| `aria2c` | Yes | BitTorrent download engine |
+| curl | Yes | HTTP requests |
+| mpv | Yes | Video playback |
+| fzf | Yes | Interactive menus |
+| jq | Yes | JSON parsing |
+| python3 | Yes | URL encoding |
+| nodejs + npm | Yes | Required for peerflix |
+| peerflix | Yes | Torrent streaming to MPV |
 
 ---
 
 ## Install
 
-### One-liner (recommended)
+### One-liner
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lain-iwakura-exe/seri-cli/main/install.sh | bash
 ```
@@ -81,7 +85,7 @@ seri-cli [OPTIONS] [QUERY]
 
 OPTIONS
   -H, --history     Show watch history
-  -u, --update      Update seri-cli to latest version
+  -u, --update      Update seri-cli
   -h, --help        Show help
   -v, --version     Show version
 ```
@@ -98,48 +102,25 @@ seri-cli "House of the Dragon"
 
 ## How it works
 
-1. Search TMDB for your title (movies and shows 1980-2026)
+1. Search TMDB for your title
 2. Get the IMDB ID automatically
 3. Query Torrentio for stream sources
 4. Pick best quality (1080p preferred)
-5. aria2c downloads the torrent sequentially to disk
-6. Once 20MB is buffered, MPV opens automatically and plays the file
-7. Download continues in the background while you watch
-
----
-
-## Note on ISP restrictions
-
-Some ISPs throttle or block BitTorrent protocol traffic. If streams
-consistently show 0 peers regardless of title, this is likely the cause.
-A VPN resolves this.
+5. peerflix serves the torrent on localhost:8888
+6. MPV opens and plays the stream automatically
 
 ---
 
 ## Troubleshooting
 
-**MPV does not open**
-Install aria2: `sudo apt install aria2` (or pacman/dnf/zypper)
+**MPV does not open / 0 peers on every title**
+Your ISP may be blocking BitTorrent traffic. Use a VPN.
 
-**0 peers on every title**
-Your ISP is blocking BitTorrent traffic. Use a VPN.
-
-**fzf menu is empty**
-Check your internet connection.
+**No streams found**
+Try searching with the year: seri-cli "Fight Club 1999"
 
 **Permission denied**
-`sudo chmod +x /usr/local/bin/seri-cli`
-
----
-
-## Config
-
-`~/.config/seri-cli/config`
-```bash
-TMDB_KEY=your_key_here
-QUALITY=best
-DOWNLOAD_DIR=/tmp/seri-cli-downloads
-```
+sudo chmod +x /usr/local/bin/seri-cli
 
 ---
 
